@@ -20,7 +20,7 @@ from io import IOBase, SEEK_END, SEEK_SET
 from mimetypes import guess_type
 from pathlib import Path
 from pkg_resources import require
-from typing import Dict
+from typing import Dict, Literal
 from urllib.parse import urlencode, urlparse
 
 from bs4 import BeautifulSoup
@@ -88,7 +88,7 @@ class _JustStreamLiveClient:
 
         elif isinstance(video, StreamwoVideo):
             return self.mirror_from_url(
-                _StreamwoClient(self.__session).get_video_url(video.id)
+                _StreamwoClient(self.__session).get_video_url(video.link_id)
             )
 
         else:
@@ -225,6 +225,35 @@ class _StreamableClient:
     def __init__(self, session: Session) -> None:
         self.__session = session
 
+    def __generate_clip_shortcode(
+        self,
+        video_id: str,
+        video_source: str,
+        title: str | None = None,
+    ):
+        res = self.__session.post(
+            f"{_StreamableClient.api_url}/videos",
+            json={
+                "extract_id": video_id,
+                "extractor": "streamable",
+                "source": video_source,
+                "status": 1,
+                "title": title,
+                "upload_source": "clip",
+            },
+        )
+        res.raise_for_status()
+        res_json = res.json()
+
+        assert "error" not in res_json or res_json["error"] is None, \
+            "Error occurred while trying to generate clip shortcode!\n" + \
+            res_json["error"]
+
+        shortcode = res_json["shortcode"]
+        assert isinstance(shortcode, str)
+
+        return shortcode
+
     def __generate_upload_shortcode(self, video_sz: int):
         res = self.__session.get(
             f"{_StreamableClient.api_url}/shortcode",
@@ -243,6 +272,35 @@ class _StreamableClient:
             res_json["credentials"]["sessionToken"],
             res_json["transcoder_options"]["token"],
         )
+
+    def __transcode_clipped_video(
+        self,
+        shortcode: str,
+        video_headers: Dict[str, str],
+        video_url: str,
+        extractor: Literal["streamable", "generic"] = "generic",
+        mute: bool = False,
+        title: str | None = None,
+    ):
+        res = self.__session.post(
+            f"{_StreamableClient.api_url}/transcode/{shortcode}",
+            json={
+                "extractor": extractor,
+                "headers": video_headers,
+                "mute": mute,
+                "shortcode": shortcode,
+                "thumb_offset": None,
+                "title": title,
+                "upload_source": "clip",
+                "url": video_url,
+            },
+        )
+        res.raise_for_status()
+
+        res_json = res.json()
+        assert "error" not in res_json or res_json["error"] is None, \
+            "Error occurred while trying to transcode clip shortcode!\n" + \
+            res_json["error"]
 
     def __transcode_uploaded_video(
         self,
@@ -289,8 +347,41 @@ class _StreamableClient:
         )
         res.raise_for_status()
 
+    def __video_extractor(self, url: str):
+        res = self.__session.get(
+            f"{_StreamableClient.api_url}/extract",
+            params={"url": url},
+        )
+        res.raise_for_status()
+        res_json = res.json()
+
+        assert "error" not in res_json or res_json["error"] is None, \
+            "Error occurred while trying to extract video URL!\n" + \
+            res_json["error"]
+
+        return res_json["url"], res_json["headers"]
+
     def clear_cookies(self):
         self.__session.cookies.clear(domain=".streamable.com")
+
+    def get_video_url(self, video_id: str):
+        res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
+        res.raise_for_status()
+
+        vid_source_tag = BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find(
+            "meta",
+            attrs={"property": "og:video:secure_url"},
+        )
+
+        assert isinstance(vid_source_tag, Tag)
+
+        video_source_url = vid_source_tag["content"]
+        assert isinstance(video_source_url, str)
+
+        return video_source_url
 
     def is_video_available(self, video_id: str):
         return self.__session.get(
@@ -314,8 +405,85 @@ class _StreamableClient:
         video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
         title: str | None = None,
     ):
-        # TODO: Implementation
-        pass
+        if isinstance(video, StreamableVideo):
+            url, headers = self.__video_extractor(str(video.url))
+
+            mirror_shortcode = self.__generate_clip_shortcode(
+                video.shortcode,
+                str(video.url),
+                title=title,
+            )
+
+            self.__transcode_clipped_video(
+                mirror_shortcode,
+                headers,
+                url,
+                extractor="streamable",
+                title=title,
+            )
+
+            return StreamableVideo(shortcode=mirror_shortcode)
+
+        elif isinstance(video, StreamffVideo):
+            video_url = _StreamffClient(self.__session).get_video_url(video.id)
+            url, headers = self.__video_extractor(video_url)
+
+            mirror_shortcode = self.__generate_clip_shortcode(
+                video.id,
+                str(video.url),
+                title=title,
+            )
+
+            self.__transcode_clipped_video(
+                mirror_shortcode,
+                headers,
+                url,
+                extractor="generic",
+                title=title,
+            )
+
+            return StreamableVideo(shortcode=mirror_shortcode)
+
+        elif isinstance(video, StreamjaVideo):
+            url, headers = self.__video_extractor(str(video.url))
+
+            mirror_shortcode = self.__generate_clip_shortcode(
+                video.short_id,
+                str(video.url),
+                title=title,
+            )
+
+            self.__transcode_clipped_video(
+                mirror_shortcode,
+                headers,
+                url,
+                extractor="generic",
+                title=title,
+            )
+
+            return StreamableVideo(shortcode=mirror_shortcode)
+
+        elif isinstance(video, StreamwoVideo):
+            url, headers = self.__video_extractor(str(video.url))
+
+            mirror_shortcode = self.__generate_clip_shortcode(
+                video.link_id,
+                str(video.url),
+                title=title,
+            )
+
+            self.__transcode_clipped_video(
+                mirror_shortcode,
+                headers,
+                url,
+                extractor="generic",
+                title=title,
+            )
+
+            return StreamableVideo(shortcode=mirror_shortcode)
+
+        else:
+            raise Exception("Unsupported video!")
 
     def upload_video(
         self,
@@ -414,13 +582,6 @@ class _StreamffClient:
 
         return f'{_StreamffClient.base_url}{res.json()["videoLink"]}'
 
-    def mirror_video(
-        self,
-        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
-    ):
-        # TODO: Implementation
-        pass
-
     def upload_video(self, video_io: IOBase, filename: str):
         res = self.__generate_link()
         res.raise_for_status()
@@ -486,13 +647,6 @@ class _StreamjaClient:
             "div",
             attrs={"id": "video_container"}
         ) is None
-
-    def mirror_video(
-        self,
-        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
-    ):
-        # TODO: Implementation
-        pass
 
     def upload_video(self, video_io: IOBase, filename: str):
         multipart_data = MultipartEncoder({
@@ -592,13 +746,6 @@ class _StreamwoClient:
             "automatically after <span id=\"remSeconds\">5</span> " +
             "seconds..." in res.text
         )
-
-    def mirror_video(
-        self,
-        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
-    ):
-        # TODO: Implementation
-        pass
 
     def upload_video(self, video_io: IOBase, filename: str):
         link_id = self.__generate_upload_id()

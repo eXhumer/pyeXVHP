@@ -48,6 +48,52 @@ class _JustStreamLiveClient:
     def __init__(self, session: Session) -> None:
         self.__session = session
 
+    def is_video_available(self, video_id: str):
+        return self.__session.get(
+            f"{_JustStreamLiveClient.api_url}/videos/{video_id}"
+        ).ok
+
+    def is_video_processing(self, video_id: str):
+        res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
+        res.raise_for_status()
+
+        status = res.json()["status"]
+        assert isinstance(status, str)
+
+        return status != "COMPLETE"
+
+    def mirror_from_url(self, url: str):
+        res = self.__session.post(
+            f"{_JustStreamLiveClient.api_url}/videos/upload-from-url",
+            json={"url": url},
+        )
+        res.raise_for_status()
+
+        return JustStreamLiveVideo(id=res.json()["id"])
+
+    def mirror_video(
+        self,
+        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
+    ):
+        if isinstance(video, StreamableVideo):
+            return self.mirror_from_url(str(video.url))
+
+        elif isinstance(video, StreamffVideo):
+            return self.mirror_from_url(
+                _StreamffClient(self.__session).get_video_url(video.id)
+            )
+
+        elif isinstance(video, StreamjaVideo):
+            return self.mirror_from_url(str(video.url))
+
+        elif isinstance(video, StreamwoVideo):
+            return self.mirror_from_url(
+                _StreamwoClient(self.__session).get_video_url(video.id)
+            )
+
+        else:
+            raise Exception("Unsupported video!")
+
     def upload_video(self, video_io: IOBase, filename: str):
         multipart_data = MultipartEncoder({
             "file": (
@@ -61,15 +107,6 @@ class _JustStreamLiveClient:
             f"{_JustStreamLiveClient.api_url}/videos/upload",
             data=multipart_data,
             headers={"Content-Type": multipart_data.content_type},
-        )
-        res.raise_for_status()
-
-        return JustStreamLiveVideo(id=res.json()["id"])
-
-    def mirror_from_url(self, url: str):
-        res = self.__session.post(
-            f"{_JustStreamLiveClient.api_url}/videos/upload-from-url",
-            json={"url": url},
         )
         res.raise_for_status()
 
@@ -255,6 +292,31 @@ class _StreamableClient:
     def clear_cookies(self):
         self.__session.cookies.clear(domain=".streamable.com")
 
+    def is_video_available(self, video_id: str):
+        return self.__session.get(
+            f"{_StreamableClient.base_url}/{video_id}"
+        ).ok
+
+    def is_video_processing(self, video_id: str):
+        res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
+        res.raise_for_status()
+
+        return BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find(
+            "div",
+            attrs={"id": "player-content"}
+        ) is None
+
+    def mirror_video(
+        self,
+        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
+        title: str | None = None,
+    ):
+        # TODO: Implementation
+        pass
+
     def upload_video(
         self,
         video_io: IOBase,
@@ -352,6 +414,13 @@ class _StreamffClient:
 
         return f'{_StreamffClient.base_url}{res.json()["videoLink"]}'
 
+    def mirror_video(
+        self,
+        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
+    ):
+        # TODO: Implementation
+        pass
+
     def upload_video(self, video_io: IOBase, filename: str):
         res = self.__generate_link()
         res.raise_for_status()
@@ -417,6 +486,13 @@ class _StreamjaClient:
             "div",
             attrs={"id": "video_container"}
         ) is None
+
+    def mirror_video(
+        self,
+        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
+    ):
+        # TODO: Implementation
+        pass
 
     def upload_video(self, video_io: IOBase, filename: str):
         multipart_data = MultipartEncoder({
@@ -497,6 +573,32 @@ class _StreamwoClient:
         assert isinstance(video_source_url, str)
 
         return video_source_url
+
+    def is_video_available(self, video_id: str):
+        res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")
+        res.raise_for_status()
+
+        return (
+            "<span style=\"color:#FF0000;\">File " +
+            f"{video_id} not found</span>" not in res.text
+        )
+
+    def is_video_processing(self, video_id: str):
+        res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")
+        res.raise_for_status()
+
+        return (
+            "File upload is in progress. Page will refresh " +
+            "automatically after <span id=\"remSeconds\">5</span> " +
+            "seconds..." in res.text
+        )
+
+    def mirror_video(
+        self,
+        video: StreamableVideo | StreamffVideo | StreamjaVideo | StreamwoVideo,
+    ):
+        # TODO: Implementation
+        pass
 
     def upload_video(self, video_io: IOBase, filename: str):
         link_id = self.__generate_upload_id()

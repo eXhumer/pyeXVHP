@@ -16,7 +16,7 @@
 from datetime import datetime, timezone
 from hashlib import sha256
 from hmac import new as hmac_new
-from io import IOBase, SEEK_END, SEEK_SET
+from io import BytesIO, IOBase, SEEK_END, SEEK_SET
 from mimetypes import guess_type
 from pathlib import Path
 from pkg_resources import require
@@ -364,6 +364,12 @@ class _StreamableClient:
     def clear_cookies(self):
         self.__session.cookies.clear(domain=".streamable.com")
 
+    def get_video_content(self, video_id: str):
+        video_url = self.get_video_url(video_id)
+        res = self.__session.get(video_url)
+        res.raise_for_status()
+        return BytesIO(res.content)
+
     def get_video_url(self, video_id: str):
         res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
         res.raise_for_status()
@@ -574,6 +580,12 @@ class _StreamffClient:
             f"{_StreamffClient.base_url}/api/videos/generate-link"
         )
 
+    def get_video_content(self, video_id: str):
+        video_url = self.get_video_url(video_id)
+        res = self.__session.get(video_url)
+        res.raise_for_status()
+        return BytesIO(res.content)
+
     def get_video_url(self, video_id: str):
         res = self.__session.get(
             f"{_StreamffClient.base_url}/api/videos/{video_id}"
@@ -619,6 +631,12 @@ class _StreamjaClient:
 
     def clear_cookies(self):
         self.__session.cookies.clear(domain="streamja.com")
+
+    def get_video_content(self, video_id: str):
+        video_url = self.get_video_url(video_id)
+        res = self.__session.get(video_url)
+        res.raise_for_status()
+        return BytesIO(res.content)
 
     def get_video_url(self, video_id: str):
         res = self.__session.get(f"{_StreamjaClient.base_url}/{video_id}")
@@ -711,6 +729,12 @@ class _StreamwoClient:
 
     def clear_cookies(self):
         self.__session.cookies.clear(domain="streamwo.com")
+
+    def get_video_content(self, video_id: str):
+        video_url = self.get_video_url(video_id)
+        res = self.__session.get(video_url)
+        res.raise_for_status()
+        return BytesIO(res.content)
 
     def get_video_url(self, video_id: str):
         res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")

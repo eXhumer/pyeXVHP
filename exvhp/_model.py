@@ -25,6 +25,15 @@ class JustStreamLiveVideo(BaseModel):
         return f"https://juststream.live/{values['id']}"
 
 
+class MixtureVideo(BaseModel):
+    link_id: str
+    url: HttpUrl = None
+
+    @validator("url", pre=True, always=True)
+    def url_validator(cls, v, values, **kwargs):
+        return f"https://mixture.gg/v/{values['link_id']}"
+
+
 class StreamableVideo(BaseModel):
     shortcode: str
     url: HttpUrl = None

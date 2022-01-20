@@ -190,11 +190,12 @@ class _MixtureClient:
         res = self.__session.get(f"{_MixtureClient.base_url}/v/{video_id}")
         res.raise_for_status()
 
-        return (
-            "File upload is in progress. Page will refresh " +
-            "automatically after <span id=\"remSeconds\">5</span> " +
-            "seconds..." in res.text
-        )
+        vid_source_tag = BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find("source")
+
+        return vid_source_tag is None
 
     def upload_video(self, video_io: IOBase, filename: str):
         link_id = self.__generate_upload_id()
@@ -876,11 +877,12 @@ class _StreamwoClient:
         res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")
         res.raise_for_status()
 
-        return (
-            "File upload is in progress. Page will refresh " +
-            "automatically after <span id=\"remSeconds\">5</span> " +
-            "seconds..." in res.text
-        )
+        vid_source_tag = BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find("source")
+
+        return vid_source_tag is None
 
     def upload_video(self, video_io: IOBase, filename: str):
         link_id = self.__generate_upload_id()

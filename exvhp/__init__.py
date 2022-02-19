@@ -32,11 +32,10 @@ from requests_toolbelt import MultipartEncoder
 
 from ._model import (
     JustStreamLiveVideo,
-    MixtureVideo,
     StreamableVideo,
     StreamffVideo,
+    StreamggVideo,
     StreamjaVideo,
-    StreamwoVideo,
 )
 
 __version__ = require(__package__)[0].version
@@ -75,18 +74,13 @@ class _JustStreamLiveClient:
     def mirror_video(
         self,
         video: Union[
-            MixtureVideo,
             StreamableVideo,
             StreamffVideo,
+            StreamggVideo,
             StreamjaVideo,
-            StreamwoVideo,
         ],
     ):
-        if isinstance(video, MixtureVideo):
-            return self.mirror_from_url(
-                _MixtureClient(self.__session).get_video_url(video.link_id)
-            )
-        elif isinstance(video, StreamableVideo):
+        if isinstance(video, StreamableVideo):
             return self.mirror_from_url(str(video.url))
 
         elif isinstance(video, StreamffVideo):
@@ -94,13 +88,13 @@ class _JustStreamLiveClient:
                 _StreamffClient(self.__session).get_video_url(video.id)
             )
 
+        elif isinstance(video, StreamggVideo):
+            return self.mirror_from_url(
+                _StreamggClient(self.__session).get_video_url(video.link_id)
+            )
+
         elif isinstance(video, StreamjaVideo):
             return self.mirror_from_url(str(video.url))
-
-        elif isinstance(video, StreamwoVideo):
-            return self.mirror_from_url(
-                _StreamwoClient(self.__session).get_video_url(video.link_id)
-            )
 
         else:
             raise Exception("Unsupported video!")
@@ -122,101 +116,6 @@ class _JustStreamLiveClient:
         res.raise_for_status()
 
         return JustStreamLiveVideo(id=res.json()["id"])
-
-
-class _MixtureClient:
-    base_url = "https://mixture.gg"
-
-    def __init__(self, session: Session) -> None:
-        self.__session = session
-
-    def __generate_upload_id(self):
-        res = self.__session.get(_MixtureClient.base_url)
-        res.raise_for_status()
-
-        link_id_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find(
-            "input",
-            attrs={
-                "type": "hidden",
-                "name": "link_id",
-                "id": "link_id",
-            },
-        )
-        assert isinstance(link_id_tag, Tag)
-
-        link_id = link_id_tag["value"]
-        assert isinstance(link_id, str)
-
-        return link_id
-
-    def clear_cookies(self):
-        self.__session.cookies.clear(domain="mixture.gg")
-
-    def get_video_content(self, video_id: str):
-        video_url = self.get_video_url(video_id)
-        res = self.__session.get(video_url)
-        res.raise_for_status()
-        return BytesIO(res.content)
-
-    def get_video_url(self, video_id: str):
-        res = self.__session.get(f"{_MixtureClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find("source")
-
-        assert isinstance(vid_source_tag, Tag)
-
-        video_source_url = vid_source_tag["src"]
-        assert isinstance(video_source_url, str)
-
-        return video_source_url
-
-    def is_video_available(self, video_id: str):
-        res = self.__session.get(f"{_MixtureClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
-        return (
-            "<span style=\"color:#FF0000;\">File " +
-            f"{video_id} not found</span>" not in res.text
-        )
-
-    def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{_MixtureClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find("source")
-
-        return vid_source_tag is None
-
-    def upload_video(self, video_io: IOBase, filename: str):
-        link_id = self.__generate_upload_id()
-
-        multipart_data = MultipartEncoder({
-            "upload_file": (
-                filename,
-                video_io,
-                guess_type(filename)[0],
-            ),
-            "link_id": link_id,
-        })
-
-        res = self.__session.post(
-            f"{_MixtureClient.base_url}/upload_file.php",
-            data=multipart_data,
-            headers={"Content-Type": multipart_data.content_type},
-        )
-        res.raise_for_status()
-
-        return MixtureVideo(link_id=link_id)
 
 
 class _StreamableClient:
@@ -515,11 +414,10 @@ class _StreamableClient:
     def mirror_video(
         self,
         video: Union[
-            MixtureVideo,
             StreamableVideo,
             StreamffVideo,
+            StreamggVideo,
             StreamjaVideo,
-            StreamwoVideo,
         ],
         title: str | None = None,
     ):
@@ -581,7 +479,7 @@ class _StreamableClient:
 
             return StreamableVideo(shortcode=mirror_shortcode)
 
-        elif isinstance(video, (MixtureVideo, StreamwoVideo)):
+        elif isinstance(video, StreamggVideo):
             url, headers = self.__video_extractor(str(video.url))
 
             mirror_shortcode = self.__generate_clip_shortcode(
@@ -729,6 +627,101 @@ class _StreamffClient:
         return StreamffVideo(id=video_id)
 
 
+class _StreamggClient:
+    base_url = "https://streamgg.com"
+
+    def __init__(self, session: Session) -> None:
+        self.__session = session
+
+    def __generate_upload_id(self):
+        res = self.__session.get(_StreamggClient.base_url)
+        res.raise_for_status()
+
+        link_id_tag = BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find(
+            "input",
+            attrs={
+                "type": "hidden",
+                "name": "link_id",
+                "id": "link_id",
+            },
+        )
+        assert isinstance(link_id_tag, Tag)
+
+        link_id = link_id_tag["value"]
+        assert isinstance(link_id, str)
+
+        return link_id
+
+    def clear_cookies(self):
+        self.__session.cookies.clear(domain="streamgg.com")
+
+    def get_video_content(self, video_id: str):
+        video_url = self.get_video_url(video_id)
+        res = self.__session.get(video_url)
+        res.raise_for_status()
+        return BytesIO(res.content)
+
+    def get_video_url(self, video_id: str):
+        res = self.__session.get(f"{_StreamggClient.base_url}/v/{video_id}")
+        res.raise_for_status()
+
+        vid_source_tag = BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find("source")
+
+        assert isinstance(vid_source_tag, Tag)
+
+        video_source_url = vid_source_tag["src"]
+        assert isinstance(video_source_url, str)
+
+        return video_source_url
+
+    def is_video_available(self, video_id: str):
+        res = self.__session.get(f"{_StreamggClient.base_url}/v/{video_id}")
+        res.raise_for_status()
+
+        return (
+            f"This video does not exist. <small><br>id: {video_id}</small>"
+            not in res.text
+        )
+
+    def is_video_processing(self, video_id: str):
+        res = self.__session.get(f"{_StreamggClient.base_url}/v/{video_id}")
+        res.raise_for_status()
+
+        vid_source_tag = BeautifulSoup(
+            res.text,
+            features="html.parser",
+        ).find("source")
+
+        return vid_source_tag is None
+
+    def upload_video(self, video_io: IOBase, filename: str):
+        link_id = self.__generate_upload_id()
+
+        multipart_data = MultipartEncoder({
+            "upload_file": (
+                filename,
+                video_io,
+                guess_type(filename)[0],
+            ),
+            "link_id": link_id,
+        })
+
+        res = self.__session.post(
+            f"{_StreamggClient.base_url}/upload_file.php",
+            data=multipart_data,
+            headers={"Content-Type": multipart_data.content_type},
+        )
+        res.raise_for_status()
+
+        return StreamggVideo(link_id=link_id)
+
+
 class _StreamjaClient:
     base_url = "https://streamja.com"
 
@@ -811,101 +804,6 @@ class _StreamjaClient:
         return StreamjaVideo(short_id=short_id)
 
 
-class _StreamwoClient:
-    base_url = "https://streamwo.com"
-
-    def __init__(self, session: Session) -> None:
-        self.__session = session
-
-    def __generate_upload_id(self):
-        res = self.__session.get(_StreamwoClient.base_url)
-        res.raise_for_status()
-
-        link_id_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find(
-            "input",
-            attrs={
-                "type": "hidden",
-                "name": "link_id",
-                "id": "link_id",
-            },
-        )
-        assert isinstance(link_id_tag, Tag)
-
-        link_id = link_id_tag["value"]
-        assert isinstance(link_id, str)
-
-        return link_id
-
-    def clear_cookies(self):
-        self.__session.cookies.clear(domain="streamwo.com")
-
-    def get_video_content(self, video_id: str):
-        video_url = self.get_video_url(video_id)
-        res = self.__session.get(video_url)
-        res.raise_for_status()
-        return BytesIO(res.content)
-
-    def get_video_url(self, video_id: str):
-        res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")
-        res.raise_for_status()
-
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find("source")
-
-        assert isinstance(vid_source_tag, Tag)
-
-        video_source_url = vid_source_tag["src"]
-        assert isinstance(video_source_url, str)
-
-        return video_source_url
-
-    def is_video_available(self, video_id: str):
-        res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")
-        res.raise_for_status()
-
-        return (
-            "<span style=\"color:#FF0000;\">File " +
-            f"{video_id} not found</span>" not in res.text
-        )
-
-    def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{_StreamwoClient.base_url}/file/{video_id}")
-        res.raise_for_status()
-
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find("source")
-
-        return vid_source_tag is None
-
-    def upload_video(self, video_io: IOBase, filename: str):
-        link_id = self.__generate_upload_id()
-
-        multipart_data = MultipartEncoder({
-            "upload_file": (
-                filename,
-                video_io,
-                guess_type(filename)[0],
-            ),
-            "link_id": link_id,
-        })
-
-        res = self.__session.post(
-            f"{_StreamwoClient.base_url}/upload_file.php",
-            data=multipart_data,
-            headers={"Content-Type": multipart_data.content_type},
-        )
-        res.raise_for_status()
-
-        return StreamwoVideo(link_id=link_id)
-
-
 class Client:
     def __init__(
         self,
@@ -926,19 +824,14 @@ class Client:
             session.headers["User-Agent"] = f"{__package__}/{__version__}"
 
         self.__juststreamlive = _JustStreamLiveClient(session)
-        self.__mixture = _MixtureClient(session)
         self.__streamable = _StreamableClient(session)
         self.__streamff = _StreamffClient(session)
+        self.__streamgg = _StreamggClient(session)
         self.__streamja = _StreamjaClient(session)
-        self.__streamwo = _StreamwoClient(session)
 
     @property
     def juststreamlive(self):
         return self.__juststreamlive
-
-    @property
-    def mixture(self):
-        return self.__mixture
 
     @property
     def streamable(self):
@@ -949,9 +842,9 @@ class Client:
         return self.__streamff
 
     @property
-    def streamja(self):
-        return self.__streamja
+    def streamgg(self):
+        return self.__streamgg
 
     @property
-    def streamwo(self):
-        return self.__streamwo
+    def streamja(self):
+        return self.__streamja

@@ -6,8 +6,8 @@ Python library for managing videos hosted from various supported video hosting p
 * JustStreamLive
 * Streamable
 * Streamff
+* Streamgg
 * Streamja
-* Streamwo
 
 ## Package Installation Guide
 ### Requires

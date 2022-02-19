@@ -25,15 +25,6 @@ class JustStreamLiveVideo(BaseModel):
         return f"https://juststream.live/{values['id']}"
 
 
-class MixtureVideo(BaseModel):
-    link_id: str
-    url: HttpUrl = None
-
-    @validator("url", pre=True, always=True)
-    def url_validator(cls, v, values, **kwargs):
-        return f"https://mixture.gg/v/{values['link_id']}"
-
-
 class StreamableVideo(BaseModel):
     shortcode: str
     url: HttpUrl = None
@@ -52,6 +43,15 @@ class StreamffVideo(BaseModel):
         return f"https://streamff.com/v/{values['id']}"
 
 
+class StreamggVideo(BaseModel):
+    link_id: str
+    url: HttpUrl = None
+
+    @validator("url", pre=True, always=True)
+    def url_validator(cls, v, values, **kwargs):
+        return f"https://streamgg.com/v/{values['link_id']}"
+
+
 class StreamjaVideo(BaseModel):
     short_id: str
     url: HttpUrl = None
@@ -64,12 +64,3 @@ class StreamjaVideo(BaseModel):
     @validator("url", pre=True, always=True)
     def url_validator(cls, v, values, **kwargs):
         return f"https://streamja.com/{values['short_id']}"
-
-
-class StreamwoVideo(BaseModel):
-    link_id: str
-    url: HttpUrl = None
-
-    @validator("url", pre=True, always=True)
-    def url_validator(cls, v, values, **kwargs):
-        return f"https://streamwo.com/file/{values['link_id']}"

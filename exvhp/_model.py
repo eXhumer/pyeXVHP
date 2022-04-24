@@ -43,13 +43,13 @@ class StreamffVideo(BaseModel):
         return f"https://streamff.com/v/{values['id']}"
 
 
-class StreamggVideo(BaseModel):
+class FodderVideo(BaseModel):
     link_id: str
     url: HttpUrl = None
 
     @validator("url", pre=True, always=True)
     def url_validator(cls, v, values, **kwargs):
-        return f"https://streamgg.com/v/{values['link_id']}"
+        return f"https://v.fodder.gg/v/{values['link_id']}"
 
 
 class StreamjaVideo(BaseModel):

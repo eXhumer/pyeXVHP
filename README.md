@@ -2,11 +2,10 @@
 Python library for managing videos hosted from various supported video hosting platforms.
 
 ## Supported Platforms
-* ~~Imgur~~
+* Fodder
 * JustStreamLive
 * Streamable
 * Streamff
-* Streamgg
 * Streamja
 
 ## Package Installation Guide

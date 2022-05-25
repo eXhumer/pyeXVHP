@@ -20,7 +20,7 @@ from io import BytesIO, IOBase, SEEK_END, SEEK_SET
 from mimetypes import guess_type
 from pathlib import Path
 from pkg_resources import require
-from typing import Dict, Literal, Union
+from typing import Dict, List, Literal, Tuple, Union
 from urllib.parse import urlencode, urlparse
 
 from bs4 import BeautifulSoup
@@ -32,6 +32,11 @@ from requests_toolbelt import MultipartEncoder
 
 from ._model import (
     FodderVideo,
+    ImgurAlbumData,
+    ImgurCheckCaptchaData,
+    ImgurImageData,
+    ImgurVideoData,
+    ImgurVideoTicketData,
     JustStreamLiveVideo,
     StreamableVideo,
     StreamffVideo,
@@ -39,6 +44,216 @@ from ._model import (
 )
 
 __version__ = require(__package__)[0].version
+
+
+class _ImgurClient:
+    api_url = "https://api.imgur.com"
+    base_url = "https://imgur.com"
+    client_id = "546c25a59c58ad7"
+
+    def __init__(self, session: Session) -> None:
+        self.__session = session
+
+    def add_media_to_album(
+        self,
+        album: ImgurAlbumData,
+        *media_datas: ImgurImageData | ImgurVideoData,
+    ):
+        res = self.__session.post(
+            f"{_ImgurClient.api_url}/3/album/{album.deletehash}/add",
+            json={
+                "deletehashes": [
+                    media_data.deletehash
+                    for media_data
+                    in media_datas
+                ],
+            },
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        return res.json()["data"] is True
+
+    def check_captcha(
+        self,
+        total_upload: int,
+        g_recaptcha_response: str | None,
+    ):
+        res = self.__session.post(
+            f"{_ImgurClient.api_url}/3/upload/checkcaptcha",
+            json={
+                "g-recaptcha-response": g_recaptcha_response,
+                "total_upload": total_upload,
+            },
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        return ImgurCheckCaptchaData(**res.json()["data"])
+
+    def generate_album(self):
+        res = self.__session.post(
+            f"{_ImgurClient.api_url}/3/album",
+            params={"client_id": _ImgurClient.client_id},
+            json={},
+        )
+        res.raise_for_status()
+
+        return ImgurAlbumData(**res.json()["data"])
+
+    def get_album_medias(self, album_id: str):
+        res = self.__session.get(
+            f"{_ImgurClient.api_url}/post/v1/albums/{album_id}",
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        out: List[Tuple[str, str]] = []
+
+        for media_data in res.json()["media"]:
+            out.append((
+                media_data["id"],
+                media_data["url"],
+            ))
+
+        return out
+
+    def get_media(self, media_id: str):
+        res = self.__session.get(
+            f"{_ImgurClient.api_url}/post/v1/media/{media_id}",
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        media_data = res.json()["media"][0]
+        media_url: str = media_data["url"]
+
+        return media_id, media_url
+
+    def poll_video_tickets(self, *tickets: ImgurVideoTicketData):
+        res = self.__session.get(
+            f"{_ImgurClient.base_url}/upload/poll",
+            params={
+                "client_id": _ImgurClient.client_id,
+                "tickets[]": [ticket.ticket for ticket in tickets],
+            },
+        )
+        res.raise_for_status()
+
+        poll_data = res.json()["data"]
+
+        result: Dict[str, ImgurVideoData] = {}
+
+        for ticket in tickets:
+            if ticket.ticket in poll_data["done"]:
+                video_id: str = poll_data["done"][ticket.ticket]
+                video_deletehash: str = poll_data["images"][video_id]
+
+                result.update({
+                    ticket.ticket: ImgurVideoData(
+                        id=video_id,
+                        deletehash=video_deletehash,
+                    ),
+                })
+
+        return result
+
+    def update_album(
+        self,
+        album: ImgurAlbumData,
+        title: str | None = None,
+        description: str | None = None,
+        cover: ImgurImageData | ImgurVideoData | None = None,
+        *medias: ImgurImageData | ImgurVideoData,
+    ):
+        album_data = {}
+
+        if cover:
+            album_data.update(cover=cover.id)
+
+        if title:
+            album_data.update(title=title)
+
+        if description:
+            album_data.update(description=description)
+
+        if len(medias) > 0:
+            album_data.update(
+                deletehashes=[media.deletehash for media in medias],
+            )
+
+        res = self.__session.put(
+            f"{_ImgurClient.api_url}/3/album/{album.deletehash}",
+            json=album_data,
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        return res.json()["data"] is True
+
+    def update_media(
+        self,
+        media: ImgurImageData | ImgurVideoData,
+        title: str | None = None,
+        description: str | None = None,
+    ):
+        media_data = {}
+
+        if title:
+            media_data.update(title=title)
+
+        if description:
+            media_data.update(description=description)
+
+        res = self.__session.put(
+            f"{_ImgurClient.api_url}/3/image/{media.deletehash}",
+            json=media_data,
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        return res.json()["data"] is True
+
+    def upload_media(
+        self,
+        media_io: IOBase,
+        media_filename: str,
+        media_mimetype: str | None,
+    ):
+        if not media_mimetype:
+            media_mimetype = guess_type(media_filename)[0]
+
+        if not media_mimetype:
+            assert False, "Unable to guess media MIME type!"
+
+        assert media_mimetype.startswith(("image/", "vidoe/"))
+
+        media_name = (
+            "image"
+            if media_mimetype.startswith("image/")
+            else "video"
+        )
+
+        media_data = MultipartEncoder({
+            media_name: (
+                media_filename,
+                media_io,
+                media_mimetype,
+            ),
+        })
+
+        res = self.__session.post(
+            f"{_ImgurClient.api_url}/3/image",
+            data=media_data,
+            headers={"Content-Type": media_data.content_type},
+            params={"client_id": _ImgurClient.client_id},
+        )
+        res.raise_for_status()
+
+        if media_name == "image":
+            return ImgurImageData(**res.json()["data"])
+
+        return ImgurVideoTicketData(**res.json()["data"])
 
 
 class _JustStreamLiveClient:
@@ -787,11 +1002,16 @@ class Client:
         elif session.headers["User-Agent"] == requests_user_agent():
             session.headers["User-Agent"] = f"{__package__}/{__version__}"
 
+        self.__imgur = _ImgurClient(session)
         self.__juststreamlive = _JustStreamLiveClient(session)
         self.__streamable = _StreamableClient(session)
         self.__streamff = _StreamffClient(session)
         self.__fodder = _FodderClient(session)
         self.__streamja = _StreamjaClient(session)
+
+    @property
+    def imgur(self):
+        return self.__imgur
 
     @property
     def juststreamlive(self):

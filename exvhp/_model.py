@@ -16,6 +16,31 @@
 from pydantic import BaseModel, HttpUrl, validator
 
 
+class ImgurAlbumData(BaseModel):
+    id: str
+    deletehash: str
+
+
+class ImgurCheckCaptchaData(BaseModel):
+    OverLimit: int
+    UploadCount: int
+    message: str
+
+
+class ImgurImageData(BaseModel):
+    id: str
+    deletehash: str
+
+
+class ImgurVideoData(BaseModel):
+    id: str
+    deletehash: str
+
+
+class ImgurVideoTicketData(BaseModel):
+    ticket: str
+
+
 class JustStreamLiveVideo(BaseModel):
     id: str
     url: HttpUrl = None

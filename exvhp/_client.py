@@ -125,8 +125,7 @@ class _ImgurClient:
         )
         res.raise_for_status()
 
-        media_data = res.json()["media"][0]
-        media_url: str = media_data["url"]
+        media_url: str = res.json()["url"]
 
         return media_id, media_url
 
@@ -598,6 +597,7 @@ class _StreamableClient:
     def mirror_video(
         self,
         video: Union[
+            ImgurVideoData,
             StreamableVideo,
             StreamffVideo,
             FodderVideo,
@@ -605,7 +605,27 @@ class _StreamableClient:
         ],
         title: str | None = None,
     ):
-        if isinstance(video, StreamableVideo):
+        if isinstance(video, ImgurVideoData):
+            imgur = _ImgurClient(self.__session)
+            url, headers = self.__video_extractor(imgur.get_media(video.id)[1])
+
+            mirror_shortcode = self.__generate_clip_shortcode(
+                video.id,
+                f"{_ImgurClient.base_url}/{video.id}",
+                title=title,
+            )
+
+            self.__transcode_clipped_video(
+                mirror_shortcode,
+                headers,
+                url,
+                extractor="generic",
+                title=title,
+            )
+
+            return StreamableVideo(shortcode=mirror_shortcode)
+
+        elif isinstance(video, StreamableVideo):
             url, headers = self.__video_extractor(str(video.url))
 
             mirror_shortcode = self.__generate_clip_shortcode(

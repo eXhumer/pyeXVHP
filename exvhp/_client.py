@@ -130,6 +130,12 @@ class _ImgurClient:
 
         return media_id, media_url
 
+    def get_media_content(self, media_id: str):
+        media_url = self.get_media(media_id)[1]
+        res = self.__session.get(media_url)
+        res.raise_for_status()
+        return BytesIO(res.content)
+
     def poll_video_tickets(self, *tickets: ImgurVideoTicketData):
         res = self.__session.get(
             f"{_ImgurClient.base_url}/upload/poll",
@@ -147,7 +153,7 @@ class _ImgurClient:
         for ticket in tickets:
             if ticket.ticket in poll_data["done"]:
                 video_id: str = poll_data["done"][ticket.ticket]
-                video_deletehash: str = poll_data["images"][video_id]
+                video_deletehash: str = poll_data["images"][video_id]["deletehash"]
 
                 result.update({
                     ticket.ticket: ImgurVideoData(
@@ -218,15 +224,15 @@ class _ImgurClient:
         self,
         media_io: IOBase,
         media_filename: str,
-        media_mimetype: str | None,
+        media_mimetype: str | None = None,
     ):
         if not media_mimetype:
-            media_mimetype = guess_type(media_filename)[0]
+            media_mimetype = guess_type(media_filename, strict=False)[0]
 
         if not media_mimetype:
             assert False, "Unable to guess media MIME type!"
 
-        assert media_mimetype.startswith(("image/", "vidoe/"))
+        assert media_mimetype.startswith(("image/", "video/"))
 
         media_name = (
             "image"

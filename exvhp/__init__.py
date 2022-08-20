@@ -15,7 +15,7 @@
 
 from ._client import Client  # noqa: F401
 from ._model import (  # noqa: F401
-    FodderVideo,
+    GfyCatVideo,
     ImgurAlbumData,
     ImgurCheckCaptchaData,
     ImgurImageData,

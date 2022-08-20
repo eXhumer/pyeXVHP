@@ -68,15 +68,6 @@ class StreamffVideo(BaseModel):
         return f"https://streamff.com/v/{values['id']}"
 
 
-class FodderVideo(BaseModel):
-    link_id: str
-    url: HttpUrl = None
-
-    @validator("url", pre=True, always=True)
-    def url_validator(cls, v, values, **kwargs):
-        return f"https://v.fodder.gg/v/{values['link_id']}"
-
-
 class StreamjaVideo(BaseModel):
     short_id: str
     url: HttpUrl = None
@@ -89,3 +80,17 @@ class StreamjaVideo(BaseModel):
     @validator("url", pre=True, always=True)
     def url_validator(cls, v, values, **kwargs):
         return f"https://streamja.com/{values['short_id']}"
+
+
+class GfyCatVideo(BaseModel):
+    gfyname: str
+    url: HttpUrl = None
+    mp4_url: HttpUrl = None
+
+    @validator("url", pre=True, always=True)
+    def url_validator(cls, v, values, **kwargs):
+        return f"https://gfycat.com/{values['gfyname']}"
+
+    @validator("mp4_url", pre=True, always=True)
+    def mp4_url_validator(cls, v, values, **kwargs):
+        return f"https://giant.gfycat.com/{values['gfyname']}"

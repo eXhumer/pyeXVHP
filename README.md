@@ -2,7 +2,7 @@
 Python library for managing videos hosted from various supported video hosting platforms.
 
 ## Supported Platforms
-* Fodder
+* GfyCat
 * Imgur
 * JustStreamLive
 * Streamable

@@ -13,14 +13,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from hmac import new as hmac_new
 from io import BytesIO, IOBase, SEEK_END, SEEK_SET
 from mimetypes import guess_type
 from pathlib import Path
 from pkg_resources import require
-from typing import Dict, List, Literal, Tuple, Union
+from typing import BinaryIO, Dict, List, Literal, Optional, Tuple, Union
 from urllib.parse import urlencode, urlparse
 
 from bs4 import BeautifulSoup
@@ -31,7 +32,7 @@ from requests.utils import default_user_agent as requests_user_agent
 from requests_toolbelt import MultipartEncoder
 
 from ._model import (
-    FodderVideo,
+    GfyCatVideo,
     ImgurAlbumData,
     ImgurCheckCaptchaData,
     ImgurImageData,
@@ -45,6 +46,65 @@ from ._model import (
 
 __version__ = require(__package__)[0].version
 
+
+class _GfyCatClient:
+    webtoken_access_key = "Anr96uuqt9EdamSCwK4txKPjMsf2M95Rfa5FLLhPFucu8H5HTzeutyAa"
+
+    def __obtain_authorization(self):
+        res = self.__session.post(
+            "https://weblogin.gfycat.com/oauth/webtoken",
+            json={"access_key": _GfyCatClient.webtoken_access_key},
+        )
+        res.raise_for_status()
+
+        token_data = res.json()
+        access_token: str = token_data["access_token"]
+        token_type: str = token_data["token_type"]
+        self.__expires_at = parsedate_to_datetime(res.headers["Date"]) + timedelta(seconds=token_data["expires_in"])
+        self.__authorization = f"{token_type} {access_token}"
+
+    def __init__(self, session: Session) -> None:
+        self.__authorization: Optional[str] = None
+        self.__expires_at: Optional[datetime] = None
+        self.__session = session
+        self.__obtain_authorization()
+
+    def new_video_post(self, title: str, keep_audio: bool = True):
+        if datetime.utcnow() >= self.__expires_at:
+            self.__obtain_authorization()
+
+        res = self.__session.post(
+            "https://api.gfycat.com/v1/gfycats",
+            headers={"Authorization": self.__authorization},
+            json={"keepAudio": keep_audio, "private": False, "title": title},
+        )
+        res.raise_for_status()
+
+        post_data = res.json()
+
+        upload_type: str = post_data["uploadType"]
+        secret: str = post_data["secret"]
+        gfyname: str = post_data["gfyname"]
+
+        return upload_type, secret, gfyname
+
+    def get_post_status(self, gfyname: str):
+        if datetime.utcnow() >= self.__expires_at:
+            self.__obtain_authorization()
+
+        res = self.__session.get(
+            f"https://api.gfycat.com/v1/gfycats/fetch/status/{gfyname.lower()}",
+            headers={"Authorization": self.__authorization},
+        )
+        res.raise_for_status()
+
+        return res
+
+    def upload_video(self, gfyname: str, media_io: BinaryIO, filename: str = "video_file.mp4", upload_type: str = "filedrop.gfycat.com"):
+        mp_data = MultipartEncoder(fields={"key": gfyname, "file": (filename, media_io, guess_type(filename)[0])})
+        res = self.__session.post(f"https://{upload_type}/", data=mp_data, headers={"Content-Type": mp_data.content_type})
+        res.raise_for_status()
+        return res
 
 class _ImgurClient:
     api_url = "https://api.imgur.com"
@@ -597,15 +657,34 @@ class _StreamableClient:
     def mirror_video(
         self,
         video: Union[
+            GfyCatVideo,
             ImgurVideoData,
             StreamableVideo,
             StreamffVideo,
-            FodderVideo,
             StreamjaVideo,
         ],
         title: str | None = None,
     ):
-        if isinstance(video, ImgurVideoData):
+        if isinstance(video, GfyCatVideo):
+            url, headers = self.__video_extractor(video.mp4_url)
+
+            mirror_shortcode = self.__generate_clip_shortcode(
+                video.gfyname,
+                video.url,
+                title=title,
+            )
+
+            self.__transcode_clipped_video(
+                mirror_shortcode,
+                headers,
+                url,
+                extractor="generic",
+                title=title,
+            )
+
+            return StreamableVideo(shortcode=mirror_shortcode)
+
+        elif isinstance(video, ImgurVideoData):
             imgur = _ImgurClient(self.__session)
             url, headers = self.__video_extractor(imgur.get_media(video.id)[1])
 
@@ -669,25 +748,6 @@ class _StreamableClient:
 
             mirror_shortcode = self.__generate_clip_shortcode(
                 video.short_id,
-                str(video.url),
-                title=title,
-            )
-
-            self.__transcode_clipped_video(
-                mirror_shortcode,
-                headers,
-                url,
-                extractor="generic",
-                title=title,
-            )
-
-            return StreamableVideo(shortcode=mirror_shortcode)
-
-        elif isinstance(video, FodderVideo):
-            url, headers = self.__video_extractor(str(video.url))
-
-            mirror_shortcode = self.__generate_clip_shortcode(
-                video.link_id,
                 str(video.url),
                 title=title,
             )
@@ -831,102 +891,6 @@ class _StreamffClient:
         return StreamffVideo(id=video_id)
 
 
-class _FodderClient:
-    base_url = "https://v.fodder.gg"
-
-    def __init__(self, session: Session) -> None:
-        self.__session = session
-
-    def __generate_upload_id(self):
-        res = self.__session.get(_FodderClient.base_url)
-        res.raise_for_status()
-
-        link_id_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find(
-            "input",
-            attrs={
-                "type": "hidden",
-                "name": "link_id",
-                "id": "link_id",
-            },
-        )
-        assert isinstance(link_id_tag, Tag)
-
-        link_id = link_id_tag["value"]
-        assert isinstance(link_id, str)
-
-        return link_id
-
-    def clear_cookies(self):
-        self.__session.cookies.clear(domain="v.fodder.gg")
-
-    def get_video_content(self, video_id: str):
-        video_url = self.get_video_url(video_id)
-        res = self.__session.get(video_url)
-        res.raise_for_status()
-        return BytesIO(res.content)
-
-    def get_video_url(self, video_id: str):
-        res = self.__session.get(f"{_FodderClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find("source")
-
-        assert isinstance(vid_source_tag, Tag)
-
-        video_source_url = vid_source_tag["src"]
-        assert isinstance(video_source_url, str)
-
-        return video_source_url
-
-    def is_video_available(self, video_id: str):
-        res = self.__session.get(f"{_FodderClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
-        return (
-            f"<center>This page has been removed. <small><br>id: {video_id}" +
-            "</small></center>"
-            not in res.text
-        )
-
-    def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{_FodderClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find("source")
-
-        return vid_source_tag is None
-
-    def upload_video(self, video_io: IOBase, filename: str):
-        link_id = self.__generate_upload_id()
-
-        multipart_data = MultipartEncoder({
-            "upload_file": (
-                filename,
-                video_io,
-                guess_type(filename)[0],
-            ),
-            "link_id": link_id,
-        })
-
-        res = self.__session.post(
-            f"{_FodderClient.base_url}/upload_file.php",
-            data=multipart_data,
-            headers={"Content-Type": multipart_data.content_type},
-        )
-        res.raise_for_status()
-
-        return FodderVideo(link_id=link_id)
-
-
 class _StreamjaClient:
     base_url = "https://streamja.com"
 
@@ -1028,12 +992,16 @@ class Client:
         elif session.headers["User-Agent"] == requests_user_agent():
             session.headers["User-Agent"] = f"{__package__}/{__version__}"
 
+        self.__gfycat = _GfyCatClient(session)
         self.__imgur = _ImgurClient(session)
         self.__juststreamlive = _JustStreamLiveClient(session)
         self.__streamable = _StreamableClient(session)
         self.__streamff = _StreamffClient(session)
-        self.__fodder = _FodderClient(session)
         self.__streamja = _StreamjaClient(session)
+
+    @property
+    def gfycat(self):
+        return self.__gfycat
 
     @property
     def imgur(self):
@@ -1050,10 +1018,6 @@ class Client:
     @property
     def streamff(self):
         return self.__streamff
-
-    @property
-    def fodder(self):
-        return self.__fodder
 
     @property
     def streamja(self):

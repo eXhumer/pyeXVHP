@@ -32,7 +32,6 @@ from requests.utils import default_user_agent as requests_user_agent
 from requests_toolbelt import MultipartEncoder
 
 from ._model import (
-    GfyCatVideo,
     ImgurAlbumData,
     ImgurCheckCaptchaData,
     ImgurImageData,
@@ -48,19 +47,22 @@ __version__ = require(__package__)[0].version
 
 
 class _GfyCatClient:
+    api_url = "https://api.gfycat.com"
+    weblogin_url = "https://weblogin.gfycat.com"
     webtoken_access_key = "Anr96uuqt9EdamSCwK4txKPjMsf2M95Rfa5FLLhPFucu8H5HTzeutyAa"
 
     def __obtain_authorization(self):
         res = self.__session.post(
-            "https://weblogin.gfycat.com/oauth/webtoken",
-            json={"access_key": _GfyCatClient.webtoken_access_key},
+            f"{self.weblogin_url}/oauth/webtoken",
+            json={"access_key": self.webtoken_access_key},
         )
         res.raise_for_status()
 
         token_data = res.json()
         access_token: str = token_data["access_token"]
         token_type: str = token_data["token_type"]
-        self.__expires_at = parsedate_to_datetime(res.headers["Date"]) + timedelta(seconds=token_data["expires_in"])
+        self.__expires_at = parsedate_to_datetime(res.headers["Date"]) + \
+            timedelta(seconds=token_data["expires_in"])
         self.__authorization = f"{token_type} {access_token}"
 
     def __init__(self, session: Session) -> None:
@@ -69,14 +71,14 @@ class _GfyCatClient:
         self.__session = session
         self.__obtain_authorization()
 
-    def new_video_post(self, title: str, keep_audio: bool = True):
-        if datetime.utcnow() >= self.__expires_at:
+    def new_video_post(self, title: str, keep_audio: bool = True, private: bool = True):
+        if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
         res = self.__session.post(
-            "https://api.gfycat.com/v1/gfycats",
+            f"{self.api_url}/v1/gfycats",
             headers={"Authorization": self.__authorization},
-            json={"keepAudio": keep_audio, "private": False, "title": title},
+            json={"keepAudio": keep_audio, "private": private, "title": title},
         )
         res.raise_for_status()
 
@@ -88,23 +90,52 @@ class _GfyCatClient:
 
         return upload_type, secret, gfyname
 
-    def get_post_status(self, gfyname: str):
-        if datetime.utcnow() >= self.__expires_at:
+    def get_post_info(self, gfyname: str):
+        if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
         res = self.__session.get(
-            f"https://api.gfycat.com/v1/gfycats/fetch/status/{gfyname.lower()}",
+            f"{self.api_url}/v1/gfycats/{gfyname.lower()}",
             headers={"Authorization": self.__authorization},
         )
         res.raise_for_status()
 
         return res
 
-    def upload_video(self, gfyname: str, media_io: BinaryIO, filename: str = "video_file.mp4", upload_type: str = "filedrop.gfycat.com"):
-        mp_data = MultipartEncoder(fields={"key": gfyname, "file": (filename, media_io, guess_type(filename)[0])})
-        res = self.__session.post(f"https://{upload_type}/", data=mp_data, headers={"Content-Type": mp_data.content_type})
+    def get_post_status(self, gfyname: str):
+        if datetime.now(tz=timezone.utc) >= self.__expires_at:
+            self.__obtain_authorization()
+
+        res = self.__session.get(
+            f"{self.api_url}/v1/gfycats/fetch/status/{gfyname.lower()}",
+            headers={"Authorization": self.__authorization},
+        )
+        res.raise_for_status()
+
+        task: str = res.json()["task"]
+
+        if task == "complete":
+            gfyname: str = res.json()["gfyname"]
+            return task, gfyname
+
+        elif task == "encoding" or task == "NotFoundo":
+            time: int = res.json()["time"]
+            return task, time
+
+        else:
+            assert task == "error"
+            err_msg: Dict[str, str] = res.json()["errorMessage"]
+            return task, err_msg
+
+    def upload_video(self, gfyname: str, media_io: BinaryIO, filename: str = "video_file.mp4",
+                     upload_type: str = "filedrop.gfycat.com"):
+        mp_data = MultipartEncoder(fields={"key": gfyname, "file": (filename, media_io,
+                                                                    guess_type(filename)[0])})
+        res = self.__session.post(f"https://{upload_type}/", data=mp_data,
+                                  headers={"Content-Type": mp_data.content_type})
         res.raise_for_status()
         return res
+
 
 class _ImgurClient:
     api_url = "https://api.imgur.com"
@@ -117,7 +148,7 @@ class _ImgurClient:
     def add_media_to_album(
         self,
         album: ImgurAlbumData,
-        *media_datas: ImgurImageData | ImgurVideoData,
+        *media_datas: Union[ImgurImageData, ImgurVideoData],
     ):
         res = self.__session.post(
             f"{_ImgurClient.api_url}/3/album/{album.deletehash}/add",
@@ -137,7 +168,7 @@ class _ImgurClient:
     def check_captcha(
         self,
         total_upload: int,
-        g_recaptcha_response: str | None,
+        g_recaptcha_response: Optional[str] = None,
     ):
         res = self.__session.post(
             f"{_ImgurClient.api_url}/3/upload/checkcaptcha",
@@ -226,10 +257,10 @@ class _ImgurClient:
     def update_album(
         self,
         album: ImgurAlbumData,
-        title: str | None = None,
-        description: str | None = None,
-        cover: ImgurImageData | ImgurVideoData | None = None,
-        *medias: ImgurImageData | ImgurVideoData,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        cover: Optional[Union[ImgurImageData, ImgurVideoData]] = None,
+        *medias: Union[ImgurImageData, ImgurVideoData],
     ):
         album_data = {}
 
@@ -258,9 +289,9 @@ class _ImgurClient:
 
     def update_media(
         self,
-        media: ImgurImageData | ImgurVideoData,
-        title: str | None = None,
-        description: str | None = None,
+        media: Union[ImgurImageData, ImgurVideoData],
+        title: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         media_data = {}
 
@@ -283,7 +314,7 @@ class _ImgurClient:
         self,
         media_io: IOBase,
         media_filename: str,
-        media_mimetype: str | None = None,
+        media_mimetype: Optional[str] = None,
     ):
         if not media_mimetype:
             media_mimetype = guess_type(media_filename, strict=False)[0]
@@ -477,7 +508,7 @@ class _StreamableClient:
         self,
         video_id: str,
         video_source: str,
-        title: str | None = None,
+        title: Optional[str] = None,
     ):
         res = self.__session.post(
             f"{_StreamableClient.api_url}/videos",
@@ -528,7 +559,7 @@ class _StreamableClient:
         video_url: str,
         extractor: Literal["streamable", "generic"] = "generic",
         mute: bool = False,
-        title: str | None = None,
+        title: Optional[str] = None,
     ):
         res = self.__session.post(
             f"{_StreamableClient.api_url}/transcode/{shortcode}",
@@ -578,7 +609,7 @@ class _StreamableClient:
         shortcode: str,
         filename: str,
         video_sz: int,
-        title: str | None = None,
+        title: Optional[str] = None,
     ):
         res = self.__session.put(
             "/".join((
@@ -657,34 +688,14 @@ class _StreamableClient:
     def mirror_video(
         self,
         video: Union[
-            GfyCatVideo,
             ImgurVideoData,
             StreamableVideo,
             StreamffVideo,
             StreamjaVideo,
         ],
-        title: str | None = None,
+        title: Optional[str] = None,
     ):
-        if isinstance(video, GfyCatVideo):
-            url, headers = self.__video_extractor(video.mp4_url)
-
-            mirror_shortcode = self.__generate_clip_shortcode(
-                video.gfyname,
-                video.url,
-                title=title,
-            )
-
-            self.__transcode_clipped_video(
-                mirror_shortcode,
-                headers,
-                url,
-                extractor="generic",
-                title=title,
-            )
-
-            return StreamableVideo(shortcode=mirror_shortcode)
-
-        elif isinstance(video, ImgurVideoData):
+        if isinstance(video, ImgurVideoData):
             imgur = _ImgurClient(self.__session)
             url, headers = self.__video_extractor(imgur.get_media(video.id)[1])
 
@@ -769,7 +780,7 @@ class _StreamableClient:
         self,
         video_io: IOBase,
         filename: str,
-        title: str | None = None,
+        title: Optional[str] = None,
         upload_region: str = "us-east-1",
     ):
         video_io.seek(0, SEEK_END)
@@ -976,8 +987,8 @@ class _StreamjaClient:
 class Client:
     def __init__(
         self,
-        session: Session | None = None,
-        user_agent: str | None = None,
+        session: Optional[Session] = None,
+        user_agent: Optional[str] = None,
     ) -> None:
         if session is None:
             session = Session()

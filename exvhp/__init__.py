@@ -13,15 +13,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from ._client import Client  # noqa: F401
-from ._model import (  # noqa: F401
-    ImgurAlbumData,
-    ImgurCheckCaptchaData,
-    ImgurImageData,
-    ImgurVideoData,
-    ImgurVideoTicketData,
-    JustStreamLiveVideo,
-    StreamableVideo,
-    StreamffVideo,
-    StreamjaVideo,
+from ._client import (  # noqa: F401
+    GfyCatClient,
+    ImgurClient,
+    JustStreamLiveClient,
+    StreamableClient,
+    StreamffClient,
+    StreamjaClient,
+    VHPClient,
 )

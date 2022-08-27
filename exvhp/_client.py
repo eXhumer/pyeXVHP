@@ -17,11 +17,11 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from hmac import new as hmac_new
-from io import BytesIO, IOBase, SEEK_END, SEEK_SET
+from io import SEEK_END, SEEK_SET
 from mimetypes import guess_type
 from pathlib import Path
 from pkg_resources import require
-from typing import BinaryIO, Dict, List, Literal, Optional, Tuple, Union
+from typing import BinaryIO, Dict, Literal
 from urllib.parse import urlencode, urlparse
 
 from bs4 import BeautifulSoup
@@ -31,241 +31,182 @@ from requests.structures import CaseInsensitiveDict
 from requests.utils import default_user_agent as requests_user_agent
 from requests_toolbelt import MultipartEncoder
 
-from ._model import (
-    ImgurAlbumData,
-    ImgurCheckCaptchaData,
-    ImgurImageData,
-    ImgurVideoData,
-    ImgurVideoTicketData,
-    JustStreamLiveVideo,
-    StreamableVideo,
-    StreamffVideo,
-    StreamjaVideo,
+from .type import (
+    GfyCatNewPost,
+    GfyCatPostInfo,
+    GfyCatUploadStatus,
+    GfyCatWebToken,
+    ImgurAddMediaToAlbumResponse,
+    ImgurCheckCaptchaResponse,
+    ImgurGenerateAlbumResponse,
+    ImgurMedia,
+    ImgurUpdateMediaResponse,
+    ImgurUploadedImageResponse,
+    ImgurUploadPollResponse,
+    ImgurUploadTicketResponse,
+    JustStreamLiveUploadData,
+    JustStreamLiveVideoDetails,
+    StreamableUploadData,
+    StreamableVideoData,
+    StreamableVideoExtractorData,
+    StreamjaUploadUrlData,
+    StreamjaUploadData,
 )
 
 __version__ = require(__package__)[0].version
 
 
-class _GfyCatClient:
+class GfyCatClient:
     api_url = "https://api.gfycat.com"
     weblogin_url = "https://weblogin.gfycat.com"
     webtoken_access_key = "Anr96uuqt9EdamSCwK4txKPjMsf2M95Rfa5FLLhPFucu8H5HTzeutyAa"
 
     def __obtain_authorization(self):
-        res = self.__session.post(
-            f"{self.weblogin_url}/oauth/webtoken",
-            json={"access_key": self.webtoken_access_key},
-        )
+        res = self.__session.post(f"{self.weblogin_url}/oauth/webtoken",
+                                  json={"access_key": self.webtoken_access_key})
         res.raise_for_status()
 
-        token_data = res.json()
-        access_token: str = token_data["access_token"]
-        token_type: str = token_data["token_type"]
+        token_data: GfyCatWebToken = res.json()
+        access_token = token_data["access_token"]
+        token_type = token_data["token_type"]
+        expires_in = token_data["expires_in"]
+
         self.__expires_at = parsedate_to_datetime(res.headers["Date"]) + \
-            timedelta(seconds=token_data["expires_in"])
+            timedelta(seconds=expires_in)
         self.__authorization = f"{token_type} {access_token}"
 
-    def __init__(self, session: Session) -> None:
-        self.__authorization: Optional[str] = None
-        self.__expires_at: Optional[datetime] = None
+    def __init__(self, session: Session | None = None):
+        if session is None:
+            session = Session()
+
+        self.__authorization: str | None = None
+        self.__expires_at: datetime | None = None
         self.__session = session
         self.__obtain_authorization()
+
+    def get_post_info(self, gfyid: str):
+        if datetime.now(tz=timezone.utc) >= self.__expires_at:
+            self.__obtain_authorization()
+
+        res = self.__session.get(f"{self.api_url}/v1/gfycats/{gfyid}",
+                                 headers={"Authorization": self.__authorization})
+        res.raise_for_status()
+        post_info: GfyCatPostInfo = res.json()
+
+        return post_info
+
+    def get_upload_status(self, gfyid: str):
+        if datetime.now(tz=timezone.utc) >= self.__expires_at:
+            self.__obtain_authorization()
+
+        res = self.__session.get(f"{self.api_url}/v1/gfycats/fetch/status/{gfyid}",
+                                 headers={"Authorization": self.__authorization})
+        res.raise_for_status()
+        post_status: GfyCatUploadStatus = res.json()
+
+        return post_status
 
     def new_video_post(self, title: str, keep_audio: bool = True, private: bool = True):
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
-        res = self.__session.post(
-            f"{self.api_url}/v1/gfycats",
-            headers={"Authorization": self.__authorization},
-            json={"keepAudio": keep_audio, "private": private, "title": title},
-        )
+        res = self.__session.post(f"{self.api_url}/v1/gfycats",
+                                  headers={"Authorization": self.__authorization},
+                                  json={
+                                    "keepAudio": keep_audio,
+                                    "private": private,
+                                    "title": title,
+                                  })
         res.raise_for_status()
 
-        post_data = res.json()
+        new_post_data: GfyCatNewPost = res.json()
 
-        upload_type: str = post_data["uploadType"]
-        secret: str = post_data["secret"]
-        gfyname: str = post_data["gfyname"]
+        return new_post_data
 
-        return upload_type, secret, gfyname
-
-    def get_post_info(self, gfyname: str):
-        if datetime.now(tz=timezone.utc) >= self.__expires_at:
-            self.__obtain_authorization()
-
-        res = self.__session.get(
-            f"{self.api_url}/v1/gfycats/{gfyname.lower()}",
-            headers={"Authorization": self.__authorization},
-        )
-        res.raise_for_status()
-
-        return res
-
-    def get_post_status(self, gfyname: str):
-        if datetime.now(tz=timezone.utc) >= self.__expires_at:
-            self.__obtain_authorization()
-
-        res = self.__session.get(
-            f"{self.api_url}/v1/gfycats/fetch/status/{gfyname.lower()}",
-            headers={"Authorization": self.__authorization},
-        )
-        res.raise_for_status()
-
-        task: str = res.json()["task"]
-
-        if task == "complete":
-            gfyname: str = res.json()["gfyname"]
-            return task, gfyname
-
-        elif task == "encoding" or task == "NotFoundo":
-            time: int = res.json()["time"]
-            return task, time
-
-        else:
-            assert task == "error"
-            err_msg: Dict[str, str] = res.json()["errorMessage"]
-            return task, err_msg
-
-    def upload_video(self, gfyname: str, media_io: BinaryIO, filename: str = "video_file.mp4",
+    def upload_video(self, gfyname: str, media_io: BinaryIO, filename: str = "video.mp4",
                      upload_type: str = "filedrop.gfycat.com"):
         mp_data = MultipartEncoder(fields={"key": gfyname, "file": (filename, media_io,
                                                                     guess_type(filename)[0])})
         res = self.__session.post(f"https://{upload_type}/", data=mp_data,
                                   headers={"Content-Type": mp_data.content_type})
         res.raise_for_status()
-        return res
+        return res.ok
 
 
-class _ImgurClient:
+class ImgurClient:
     api_url = "https://api.imgur.com"
     base_url = "https://imgur.com"
     client_id = "546c25a59c58ad7"
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session | None = None):
+        if session is None:
+            session = Session()
+
         self.__session = session
 
-    def add_media_to_album(
-        self,
-        album: ImgurAlbumData,
-        *media_datas: Union[ImgurImageData, ImgurVideoData],
-    ):
-        res = self.__session.post(
-            f"{_ImgurClient.api_url}/3/album/{album.deletehash}/add",
-            json={
-                "deletehashes": [
-                    media_data.deletehash
-                    for media_data
-                    in media_datas
-                ],
-            },
-            params={"client_id": _ImgurClient.client_id},
-        )
+    def add_media_to_album(self, album_deletehash: str, *media_deletehashes: str):
+        res = self.__session.post(f"{self.api_url}/3/album/{album_deletehash}/add",
+                                  json={"deletehashes": [dh for dh in media_deletehashes]},
+                                  params={"client_id": self.client_id})
         res.raise_for_status()
+        data: ImgurAddMediaToAlbumResponse = res.json()
 
-        return res.json()["data"] is True
+        return data
 
-    def check_captcha(
-        self,
-        total_upload: int,
-        g_recaptcha_response: Optional[str] = None,
-    ):
-        res = self.__session.post(
-            f"{_ImgurClient.api_url}/3/upload/checkcaptcha",
-            json={
-                "g-recaptcha-response": g_recaptcha_response,
-                "total_upload": total_upload,
-            },
-            params={"client_id": _ImgurClient.client_id},
-        )
+    def check_captcha(self, total_upload: int, g_recaptcha_response: str | None = None):
+        res = self.__session.post(f"{self.api_url}/3/upload/checkcaptcha",
+                                  json={
+                                      "g-recaptcha-response": g_recaptcha_response,
+                                      "total_upload": total_upload,
+                                  },
+                                  params={"client_id": self.client_id})
         res.raise_for_status()
+        data: ImgurCheckCaptchaResponse = res.json()
 
-        return ImgurCheckCaptchaData(**res.json()["data"])
+        return data
 
     def generate_album(self):
-        res = self.__session.post(
-            f"{_ImgurClient.api_url}/3/album",
-            params={"client_id": _ImgurClient.client_id},
-            json={},
-        )
+        res = self.__session.post(f"{self.api_url}/3/album", params={"client_id": self.client_id},
+                                  json={})
         res.raise_for_status()
+        data: ImgurGenerateAlbumResponse = res.json()
 
-        return ImgurAlbumData(**res.json()["data"])
+        return data
 
     def get_album_medias(self, album_id: str):
-        res = self.__session.get(
-            f"{_ImgurClient.api_url}/post/v1/albums/{album_id}",
-            params={"client_id": _ImgurClient.client_id},
-        )
+        res = self.__session.get(f"{self.api_url}/post/v1/albums/{album_id}",
+                                 params={"client_id": self.client_id, "include": "media"})
         res.raise_for_status()
+        data: ImgurMedia = res.json()
 
-        out: List[Tuple[str, str]] = []
-
-        for media_data in res.json()["media"]:
-            out.append((
-                media_data["id"],
-                media_data["url"],
-            ))
-
-        return out
+        return data
 
     def get_media(self, media_id: str):
-        res = self.__session.get(
-            f"{_ImgurClient.api_url}/post/v1/media/{media_id}",
-            params={"client_id": _ImgurClient.client_id},
-        )
+        res = self.__session.get(f"{self.api_url}/post/v1/media/{media_id}",
+                                 params={"client_id": self.client_id, "include": "media"})
         res.raise_for_status()
+        data: ImgurMedia = res.json()
 
-        media_url: str = res.json()["url"]
+        return data
 
-        return media_id, media_url
-
-    def get_media_content(self, media_id: str):
-        media_url = self.get_media(media_id)[1]
-        res = self.__session.get(media_url)
+    def poll_video_tickets(self, *tickets: str):
+        res = self.__session.get(f"{self.base_url}/upload/poll",
+                                 params={
+                                     "client_id": self.client_id,
+                                     "tickets[]": [ticket for ticket in tickets],
+                                 })
         res.raise_for_status()
-        return BytesIO(res.content)
+        poll_data: ImgurUploadPollResponse = res.json()
 
-    def poll_video_tickets(self, *tickets: ImgurVideoTicketData):
-        res = self.__session.get(
-            f"{_ImgurClient.base_url}/upload/poll",
-            params={
-                "client_id": _ImgurClient.client_id,
-                "tickets[]": [ticket.ticket for ticket in tickets],
-            },
-        )
-        res.raise_for_status()
+        return poll_data
 
-        poll_data = res.json()["data"]
-
-        result: Dict[str, ImgurVideoData] = {}
-
-        for ticket in tickets:
-            if ticket.ticket in poll_data["done"]:
-                video_id: str = poll_data["done"][ticket.ticket]
-                video_deletehash: str = poll_data["images"][video_id]["deletehash"]
-
-                result.update({
-                    ticket.ticket: ImgurVideoData(
-                        id=video_id,
-                        deletehash=video_deletehash,
-                    ),
-                })
-
-        return result
-
-    def update_album(
-        self,
-        album: ImgurAlbumData,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        cover: Optional[Union[ImgurImageData, ImgurVideoData]] = None,
-        *medias: Union[ImgurImageData, ImgurVideoData],
-    ):
+    def update_album(self, album_deletehash: str, title: str | None = None,
+                     description: str | None = None, cover_id: str | None = None,
+                     *media_deletehashes: str):
         album_data = {}
 
-        if cover:
-            album_data.update(cover=cover.id)
+        if cover_id:
+            album_data.update(cover=cover_id)
 
         if title:
             album_data.update(title=title)
@@ -273,26 +214,18 @@ class _ImgurClient:
         if description:
             album_data.update(description=description)
 
-        if len(medias) > 0:
-            album_data.update(
-                deletehashes=[media.deletehash for media in medias],
-            )
+        if len(media_deletehashes) > 0:
+            album_data.update(deletehashes=[dh for dh in media_deletehashes])
 
-        res = self.__session.put(
-            f"{_ImgurClient.api_url}/3/album/{album.deletehash}",
-            json=album_data,
-            params={"client_id": _ImgurClient.client_id},
-        )
+        res = self.__session.put(f"{self.api_url}/3/album/{album_deletehash}", json=album_data,
+                                 params={"client_id": self.client_id})
         res.raise_for_status()
+        data: ImgurUpdateMediaResponse = res.json()
 
-        return res.json()["data"] is True
+        return data
 
-    def update_media(
-        self,
-        media: Union[ImgurImageData, ImgurVideoData],
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-    ):
+    def update_media(self, media_deletehash: str, title: str | None = None,
+                     description: str | None = None):
         media_data = {}
 
         if title:
@@ -301,21 +234,15 @@ class _ImgurClient:
         if description:
             media_data.update(description=description)
 
-        res = self.__session.put(
-            f"{_ImgurClient.api_url}/3/image/{media.deletehash}",
-            json=media_data,
-            params={"client_id": _ImgurClient.client_id},
-        )
+        res = self.__session.put(f"{self.api_url}/3/image/{media_deletehash}", json=media_data,
+                                 params={"client_id": self.client_id})
         res.raise_for_status()
+        data: ImgurUpdateMediaResponse = res.json()
 
-        return res.json()["data"] is True
+        return data
 
-    def upload_media(
-        self,
-        media_io: IOBase,
-        media_filename: str,
-        media_mimetype: Optional[str] = None,
-    ):
+    def upload_media(self, media_io: BinaryIO, media_filename: str,
+                     media_mimetype: str | None = None):
         if not media_mimetype:
             media_mimetype = guess_type(media_filename, strict=False)[0]
 
@@ -324,342 +251,206 @@ class _ImgurClient:
 
         assert media_mimetype.startswith(("image/", "video/"))
 
-        media_name = (
-            "image"
-            if media_mimetype.startswith("image/")
-            else "video"
-        )
+        media_name = "image" if media_mimetype.startswith("image/") else "video"
 
-        media_data = MultipartEncoder({
-            media_name: (
-                media_filename,
-                media_io,
-                media_mimetype,
-            ),
-        })
+        media_data = MultipartEncoder({media_name: (media_filename, media_io, media_mimetype)})
 
-        res = self.__session.post(
-            f"{_ImgurClient.api_url}/3/image",
-            data=media_data,
-            headers={"Content-Type": media_data.content_type},
-            params={"client_id": _ImgurClient.client_id},
-        )
+        res = self.__session.post(f"{self.api_url}/3/image", data=media_data,
+                                  headers={"Content-Type": media_data.content_type},
+                                  params={"client_id": self.client_id})
         res.raise_for_status()
+        data: ImgurUploadedImageResponse | ImgurUploadTicketResponse = res.json()
 
-        if media_name == "image":
-            return ImgurImageData(**res.json()["data"])
-
-        return ImgurVideoTicketData(**res.json()["data"])
+        return data
 
 
-class _JustStreamLiveClient:
+class JustStreamLiveClient:
     api_url = "https://api.juststream.live"
     base_url = "https://juststream.live"
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session | None = None):
+        if session is None:
+            session = Session()
+
         self.__session = session
 
-    def is_video_available(self, video_id: str):
-        return self.__session.get(
-            f"{_JustStreamLiveClient.api_url}/videos/{video_id}"
-        ).ok
-
-    def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
+    def video_details(self, video_id: str):
+        res = self.__session.get(f"{self.api_url}/videos/{video_id}")
         res.raise_for_status()
+        details: JustStreamLiveVideoDetails = res.json()
+        return details
 
-        status = res.json()["status"]
-        assert isinstance(status, str)
+    def upload_video(self, video_io: BinaryIO, filename: str):
+        multipart_data = MultipartEncoder({"file": (filename, video_io,
+                                                    guess_type(filename, strict=False)[0])})
 
-        return status != "COMPLETE"
-
-    def upload_video(self, video_io: IOBase, filename: str):
-        multipart_data = MultipartEncoder({
-            "file": (
-                filename,
-                video_io,
-                guess_type(filename, strict=False)[0],
-            ),
-        })
-
-        res = self.__session.post(
-            f"{_JustStreamLiveClient.api_url}/videos/upload",
-            data=multipart_data,
-            headers={"Content-Type": multipart_data.content_type},
-        )
+        res = self.__session.post(f"{self.api_url}/videos/upload", data=multipart_data,
+                                  headers={"Content-Type": multipart_data.content_type})
         res.raise_for_status()
+        data: JustStreamLiveUploadData = res.json()
+        return data
 
-        return JustStreamLiveVideo(id=res.json()["id"])
 
-
-class _StreamableClient:
+class StreamableClient:
     api_url = "https://ajax.streamable.com"
-    aws_bucket_url = "https://streamables-upload.s3.amazonaws.com"
     base_url = "https://streamable.com"
     frontend_react_version = "5a6120a04b6db864113d706cc6a6131cb8ca3587"
 
     @staticmethod
     def __hmac_sha256_sign(key: bytes, msg: str):
-        return hmac_new(key, msg.encode("utf8"), digestmod=sha256).digest()
+        return hmac_new(key, msg.encode(encoding="utf8"), digestmod=sha256).digest()
 
     @staticmethod
-    def __aws_api_signing_key(
-        key_secret: str,
-        datestamp: str,
-        region: str,
-        service: str,
-    ):
-        key_date = _StreamableClient.__hmac_sha256_sign(
-            f"AWS4{key_secret}".encode("utf8"),
-            datestamp,
-        )
-        key_region = _StreamableClient.__hmac_sha256_sign(key_date, region)
-        key_service = _StreamableClient.__hmac_sha256_sign(key_region, service)
-        key_signing = _StreamableClient.__hmac_sha256_sign(
-            key_service, "aws4_request",
-        )
+    def __aws_api_signing_key(key_secret: str, datestamp: str, region: str, service: str):
+        key_date = StreamableClient.__hmac_sha256_sign(
+            f"AWS4{key_secret}".encode(encoding="utf8"), datestamp)
+        key_region = StreamableClient.__hmac_sha256_sign(key_date, region)
+        key_service = StreamableClient.__hmac_sha256_sign(key_region, service)
+        key_signing = StreamableClient.__hmac_sha256_sign(key_service, "aws4_request")
         return key_signing
 
     @staticmethod
-    def __aws_authorization(
-        method: str,
-        headers: CaseInsensitiveDict,
-        req_time: datetime,
-        access_key_id: str,
-        secret_access_key: str,
-        uri: str,
-        query: Dict[str, str],
-        region: str,
-        service: str = "s3",
-    ):
+    def __aws_authorization(method: str, headers: CaseInsensitiveDict, req_time: datetime,
+                            access_key_id: str, secret_access_key: str, uri: str,
+                            query: Dict[str, str], region: str, service: str):
         method = method.upper()
-        assert method in (
-            "CONNECT",
-            "DELETE",
-            "GET",
-            "HEAD",
-            "OPTIONS",
-            "PATCH",
-            "POST",
-            "PUT",
-            "TRACE",
-        ), "Invalid HTTP method specified!"
+        assert method in ("CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT",
+                          "TRACE"), "Invalid HTTP method specified!"
 
-        headers_dict = CaseInsensitiveDict()
-        query_dict = {}
+        hd = CaseInsensitiveDict()
+        qd = {}
 
         for hk, hv in dict(sorted(headers.items())).items():
-            headers_dict[hk.lower()] = hv.strip()
+            hd[hk.lower()] = hv.strip()
 
-        assert "x-amz-content-sha256" in headers_dict, \
+        assert "x-amz-content-sha256" in hd, \
             "Must specify Content SHA256 for AWS request"
 
-        algorithm = "AWS4-HMAC-SHA256"
-        credential_scope = "/".join([
-            req_time.strftime("%Y%m%d"),
-            region,
-            service,
-            "aws4_request",
-        ])
-        signed_headers = ";".join(headers_dict.keys())
+        algo = "AWS4-HMAC-SHA256"
+        cs = "/".join([req_time.strftime("%Y%m%d"), region, service, "aws4_request"])
+        sh = ";".join(hd.keys())
 
         for qk, qv in dict(sorted(query.items())).items():
-            query_dict[urlencode(qk)] = urlencode(qv)
+            qd[urlencode(qk)] = urlencode(qv)
 
+        hs = "".join([f"{hk}:{hv}\n" for hk, hv in hd.items()])
+        qs = "&".join([f"{qk}:{qv}" for qk, qv in qd.items()])
+        rs = "\n".join((method, uri, qs, hs, sh, hd["x-amz-content-sha256"]))
+        ss = "\n".join((algo, req_time.strftime("%Y%m%dT%H%M%SZ"), cs,
+                        sha256(rs.encode(encoding="utf8")).hexdigest()))
         signature = hmac_new(
-            _StreamableClient.__aws_api_signing_key(
-                secret_access_key,
-                req_time.strftime("%Y%m%d"),
-                region,
-                service,
-            ),
-            "\n".join((
-                algorithm,
-                req_time.strftime("%Y%m%dT%H%M%SZ"),
-                credential_scope,
-                sha256(
-                    "\n".join((
-                        method,
-                        uri,
-                        "&".join([f"{qk}:{qv}"
-                                  for qk, qv
-                                  in query_dict.items()]),
-                        "".join([f"{hk}:{hv}\n"
-                                for hk, hv
-                                in headers_dict.items()]),
-                        signed_headers,
-                        headers_dict["x-amz-content-sha256"],
-                    )).encode("utf8")
-                ).hexdigest(),
-            )).encode("utf8"),
+            StreamableClient.__aws_api_signing_key(secret_access_key, req_time.strftime("%Y%m%d"),
+                                                   region, service),
+            ss.encode(encoding="utf8"),
             digestmod=sha256,
         ).hexdigest()
 
-        return (
-            f"{algorithm} Credential={access_key_id}/" +
-            f"{credential_scope}, SignedHeaders={signed_headers}, Signature=" +
-            signature
-        )
+        return f"{algo} Credential={access_key_id}/{cs}, SignedHeaders={sh}, Signature={signature}"
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session | None = None):
+        if session is None:
+            session = Session()
+
         self.__session = session
 
-    def __generate_clip_shortcode(
-        self,
-        video_id: str,
-        video_source: str,
-        title: Optional[str] = None,
-    ):
-        res = self.__session.post(
-            f"{_StreamableClient.api_url}/videos",
-            json={
-                "extract_id": video_id,
-                "extractor": "streamable",
-                "source": video_source,
-                "status": 1,
-                "title": title,
-                "upload_source": "clip",
-            },
-        )
+    def __generate_clip_shortcode(self, video_id: str, video_source: str,
+                                  title: str | None = None):
+        res = self.__session.post(f"{self.api_url}/videos",
+                                  json={
+                                      "extract_id": video_id,
+                                      "extractor": (
+                                        "streamable"
+                                        if video_source.startswith("https://streamable.com")
+                                        else "generic"
+                                      ),
+                                      "source": video_source,
+                                      "status": 1,
+                                      "title": title,
+                                      "upload_source": "clip",
+                                  })
         res.raise_for_status()
-        res_json = res.json()
+        res_json: StreamableVideoData = res.json()
 
-        assert "error" not in res_json or res_json["error"] is None, \
-            "Error occurred while trying to generate clip shortcode!\n" + \
-            res_json["error"]
-
-        shortcode = res_json["shortcode"]
-        assert isinstance(shortcode, str)
-
-        return shortcode
+        return res_json
 
     def __generate_upload_shortcode(self, video_sz: int):
-        res = self.__session.get(
-            f"{_StreamableClient.api_url}/shortcode",
-            params={
-                "version": _StreamableClient.frontend_react_version,
-                "size": video_sz,
-            },
-        )
+        res = self.__session.get(f"{self.api_url}/shortcode",
+                                 params={
+                                     "version": self.frontend_react_version,
+                                     "size": video_sz,
+                                 })
         res.raise_for_status()
-        res_json = res.json()
+        res_json: StreamableUploadData = res.json()
 
-        return (
-            res_json["shortcode"],
-            res_json["credentials"]["accessKeyId"],
-            res_json["credentials"]["secretAccessKey"],
-            res_json["credentials"]["sessionToken"],
-            res_json["transcoder_options"]["token"],
-        )
+        return res_json
 
-    def __transcode_clipped_video(
-        self,
-        shortcode: str,
-        video_headers: Dict[str, str],
-        video_url: str,
-        extractor: Literal["streamable", "generic"] = "generic",
-        mute: bool = False,
-        title: Optional[str] = None,
-    ):
-        res = self.__session.post(
-            f"{_StreamableClient.api_url}/transcode/{shortcode}",
-            json={
-                "extractor": extractor,
-                "headers": video_headers,
-                "mute": mute,
-                "shortcode": shortcode,
-                "thumb_offset": None,
-                "title": title,
-                "upload_source": "clip",
-                "url": video_url,
-            },
-        )
+    def __transcode_clipped_video(self, shortcode: str, video_headers: Dict[str, str],
+                                  video_url: str,
+                                  extractor: Literal["streamable", "generic"] = "generic",
+                                  mute: bool = False, title: str | None = None):
+        res = self.__session.post(f"{self.api_url}/transcode/{shortcode}",
+                                  json={
+                                      "extractor": extractor,
+                                      "headers": video_headers,
+                                      "mute": mute,
+                                      "shortcode": shortcode,
+                                      "thumb_offset": None,
+                                      "title": title,
+                                      "upload_source": "clip",
+                                      "url": video_url,
+                                  })
         res.raise_for_status()
+        res_json: StreamableVideoData = res.json()
 
-        res_json = res.json()
-        assert "error" not in res_json or res_json["error"] is None, \
-            "Error occurred while trying to transcode clip shortcode!\n" + \
-            res_json["error"]
+        return res_json
 
-    def __transcode_uploaded_video(
-        self,
-        shortcode: str,
-        transcoder_token: str,
-        video_sz: int
-    ):
-        return self.__session.post(
-            "/".join((
-                _StreamableClient.api_url,
-                "transcode/{shortcode}".format(shortcode=shortcode),
-            )),
-            json={
-                "shortcode": shortcode,
-                "size": video_sz,
-                "token": transcoder_token,
-                "upload_source": "web",
-                "url": "/".join((
-                    _StreamableClient.aws_bucket_url,
-                    "upload/{shortcode}".format(shortcode=shortcode),
-                )),
-            },
-        )
-
-    def __update_upload_metadata(
-        self,
-        shortcode: str,
-        filename: str,
-        video_sz: int,
-        title: Optional[str] = None,
-    ):
-        res = self.__session.put(
-            "/".join((
-                _StreamableClient.api_url,
-                "videos/{shortcode}".format(shortcode=shortcode),
-            )),
-            json={
-                "original_name": filename,
-                "original_size": video_sz,
-                "title": title or Path(filename).stem,
-                "upload_source": "web",
-            },
-            params={"purge": ""},
-        )
+    def __transcode_uploaded_video(self, shortcode: str, url: str, transcoder_token: str,
+                                   video_sz: int):
+        res = self.__session.post(f"{self.api_url}/transcode/{shortcode}",
+                                  json={
+                                      "shortcode": shortcode,
+                                      "size": video_sz,
+                                      "token": transcoder_token,
+                                      "upload_source": "web",
+                                      "url": url,
+                                  })
         res.raise_for_status()
+        res_json: StreamableVideoData = res.json()
 
-    def __video_extractor(self, url: str):
-        res = self.__session.get(
-            f"{_StreamableClient.api_url}/extract",
-            params={"url": url},
-        )
+        return res_json
+
+    def __update_upload_metadata(self, shortcode: str, filename: str, video_sz: int,
+                                 title: str | None = None):
+        res = self.__session.put(f"{self.api_url}/videos/{shortcode}", params={"purge": ""},
+                                 json={
+                                     "original_name": filename,
+                                     "original_size": video_sz,
+                                     "title": title or Path(filename).stem,
+                                     "upload_source": "web",
+                                 })
         res.raise_for_status()
-        res_json = res.json()
+        res_json: StreamableVideoData = res.json()
 
-        assert "error" not in res_json or res_json["error"] is None, \
-            "Error occurred while trying to extract video URL!\n" + \
-            res_json["error"]
-
-        return res_json["url"], res_json["headers"]
+        return res_json
 
     def clear_cookies(self):
         self.__session.cookies.clear(domain=".streamable.com")
 
-    def get_video_content(self, video_id: str):
-        video_url = self.get_video_url(video_id)
-        res = self.__session.get(video_url)
-        res.raise_for_status()
-        return BytesIO(res.content)
+    def clip_video(self, video_url: str, title: str | None = None):
+        extractor_data = self.video_extractor(video_url)
+        video_data = self.__generate_clip_shortcode(extractor_data["id"], video_url, title=title)
+        self.__transcode_clipped_video(video_data["shortcode"], extractor_data["headers"],
+                                       extractor_data["url"],
+                                       extractor=extractor_data["extractor"], title=title)
+        return video_data
 
     def get_video_url(self, video_id: str):
-        res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
+        res = self.__session.get(f"{StreamableClient.base_url}/{video_id}")
         res.raise_for_status()
 
-        vid_source_tag = BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find(
+        vid_source_tag = BeautifulSoup(res.text, features="html.parser").find(
             "meta",
-            attrs={"property": "og:video:secure_url"},
-        )
+            attrs={"property": "og:video:secure_url"})
 
         assert isinstance(vid_source_tag, Tag)
 
@@ -669,138 +460,25 @@ class _StreamableClient:
         return video_source_url
 
     def is_video_available(self, video_id: str):
-        return self.__session.get(
-            f"{_StreamableClient.base_url}/{video_id}"
-        ).ok
+        return self.__session.get(f"{self.base_url}/{video_id}").ok
 
     def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{_StreamableClient.base_url}/{video_id}")
+        res = self.__session.get(f"{StreamableClient.base_url}/{video_id}")
         res.raise_for_status()
 
-        return BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find(
-            "div",
-            attrs={"id": "player-content"}
-        ) is None
+        player_tag = BeautifulSoup(res.text, features="html.parser").find(
+            "div", attrs={"id": "player-content"})
 
-    def mirror_video(
-        self,
-        video: Union[
-            ImgurVideoData,
-            StreamableVideo,
-            StreamffVideo,
-            StreamjaVideo,
-        ],
-        title: Optional[str] = None,
-    ):
-        if isinstance(video, ImgurVideoData):
-            imgur = _ImgurClient(self.__session)
-            url, headers = self.__video_extractor(imgur.get_media(video.id)[1])
+        return player_tag is None
 
-            mirror_shortcode = self.__generate_clip_shortcode(
-                video.id,
-                f"{_ImgurClient.base_url}/{video.id}",
-                title=title,
-            )
-
-            self.__transcode_clipped_video(
-                mirror_shortcode,
-                headers,
-                url,
-                extractor="generic",
-                title=title,
-            )
-
-            return StreamableVideo(shortcode=mirror_shortcode)
-
-        elif isinstance(video, StreamableVideo):
-            url, headers = self.__video_extractor(str(video.url))
-
-            mirror_shortcode = self.__generate_clip_shortcode(
-                video.shortcode,
-                str(video.url),
-                title=title,
-            )
-
-            self.__transcode_clipped_video(
-                mirror_shortcode,
-                headers,
-                url,
-                extractor="streamable",
-                title=title,
-            )
-
-            return StreamableVideo(shortcode=mirror_shortcode)
-
-        elif isinstance(video, StreamffVideo):
-            video_url = _StreamffClient(self.__session).get_video_url(video.id)
-            url, headers = self.__video_extractor(video_url)
-
-            mirror_shortcode = self.__generate_clip_shortcode(
-                video.id,
-                str(video.url),
-                title=title,
-            )
-
-            self.__transcode_clipped_video(
-                mirror_shortcode,
-                headers,
-                url,
-                extractor="generic",
-                title=title,
-            )
-
-            return StreamableVideo(shortcode=mirror_shortcode)
-
-        elif isinstance(video, StreamjaVideo):
-            url, headers = self.__video_extractor(str(video.url))
-
-            mirror_shortcode = self.__generate_clip_shortcode(
-                video.short_id,
-                str(video.url),
-                title=title,
-            )
-
-            self.__transcode_clipped_video(
-                mirror_shortcode,
-                headers,
-                url,
-                extractor="generic",
-                title=title,
-            )
-
-            return StreamableVideo(shortcode=mirror_shortcode)
-
-        else:
-            raise Exception("Unsupported video!")
-
-    def upload_video(
-        self,
-        video_io: IOBase,
-        filename: str,
-        title: Optional[str] = None,
-        upload_region: str = "us-east-1",
-    ):
+    def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4",
+                     title: str | None = None, upload_region: str = "us-east-1"):
         video_io.seek(0, SEEK_END)
         video_sz = video_io.tell()
         video_io.seek(0, SEEK_SET)
 
-        (
-            shortcode,
-            access_key_id,
-            secret_access_key,
-            session_token,
-            transcoder_token,
-        ) = self.__generate_upload_shortcode(video_sz)
-
-        self.__update_upload_metadata(
-            shortcode,
-            filename,
-            video_sz,
-            title=title,
-        )
+        upload_data = self.__generate_upload_shortcode(video_sz)
+        self.__update_upload_metadata(upload_data["shortcode"], filename, video_sz, title=title)
 
         hash = sha256()
         video_io.seek(0, SEEK_SET)
@@ -817,179 +495,147 @@ class _StreamableClient:
         req_datetime = datetime.now(tz=timezone.utc)
 
         aws_headers = CaseInsensitiveDict()
-        aws_headers["Host"] = urlparse(_StreamableClient.aws_bucket_url).netloc
+        aws_headers["Host"] = urlparse(upload_data["url"]).netloc
         aws_headers["Content-Type"] = "application/octet-stream"
         aws_headers["X-AMZ-ACL"] = "public-read"
         aws_headers["X-AMZ-Content-SHA256"] = video_hash
-        aws_headers["X-AMZ-Security-Token"] = session_token
+        aws_headers["X-AMZ-Security-Token"] = upload_data["credentials"]["sessionToken"]
         aws_headers["X-AMZ-Date"] = req_datetime.strftime("%Y%m%dT%H%M%SZ")
-        aws_headers["Authorization"] = _StreamableClient.__aws_authorization(
-            "PUT",
-            aws_headers,
-            req_datetime,
-            access_key_id, secret_access_key,
-            "/upload/{shortcode}".format(shortcode=shortcode),
-            {},
-            upload_region,
-            service="s3",
-        )
+        aws_headers["Authorization"] = StreamableClient.__aws_authorization(
+            "PUT", aws_headers, req_datetime, upload_data["credentials"]["accessKeyId"],
+            upload_data["credentials"]["secretAccessKey"], "/" + upload_data["key"], {},
+            upload_region, "s3")
 
-        res = self.__session.put(
-            "/".join((
-                _StreamableClient.aws_bucket_url,
-                "upload/{shortcode}".format(shortcode=shortcode),
-            )),
-            data=video_io,
-            headers=aws_headers,
-        )
+        res = self.__session.put(upload_data["transcoder_options"]["url"], data=video_io,
+                                 headers=aws_headers)
         res.raise_for_status()
 
-        res = self.__transcode_uploaded_video(
-            shortcode,
-            transcoder_token,
-            video_sz,
-        )
+        return self.__transcode_uploaded_video(upload_data["transcoder_options"]["shortcode"],
+                                               upload_data["transcoder_options"]["url"],
+                                               upload_data["transcoder_options"]["token"],
+                                               upload_data["transcoder_options"]["size"])
+
+    def video_extractor(self, url: str):
+        res = self.__session.get(f"{self.api_url}/extract", params={"url": url})
         res.raise_for_status()
+        res_json: StreamableVideoExtractorData = res.json()
 
-        return StreamableVideo(shortcode=shortcode)
+        assert "error" not in res_json or res_json["error"] is None, \
+            "Error occurred while trying to extract video URL!\n" + \
+            res_json["error"]
+
+        return res_json
 
 
-class _StreamffClient:
+class StreamffClient:
     base_url = "https://streamff.com"
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session | None = None):
+        if session is None:
+            session = Session()
+
         self.__session = session
 
     def __generate_link(self):
-        return self.__session.post(
-            f"{_StreamffClient.base_url}/api/videos/generate-link"
-        )
-
-    def get_video_content(self, video_id: str):
-        video_url = self.get_video_url(video_id)
-        res = self.__session.get(video_url)
-        res.raise_for_status()
-        return BytesIO(res.content)
+        return self.__session.post(f"{self.base_url}/api/videos/generate-link")
 
     def get_video_url(self, video_id: str):
-        res = self.__session.get(
-            f"{_StreamffClient.base_url}/api/videos/{video_id}"
-        )
+        res = self.__session.get(f"{self.base_url}/api/videos/{video_id}")
         res.raise_for_status()
+        res_json = res.json()
+        print(res_json)
+        return res_json
 
-        return f'{_StreamffClient.base_url}{res.json()["videoLink"]}'
-
-    def upload_video(self, video_io: IOBase, filename: str):
+    def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4"):
         res = self.__generate_link()
         res.raise_for_status()
         video_id = res.text
 
-        multipart_data = MultipartEncoder({
-            "file": (
-                filename,
-                video_io,
-                guess_type(filename)[0],
-            ),
-        })
+        multipart_data = MultipartEncoder({"file": (filename, video_io, guess_type(filename)[0])})
 
-        res = self.__session.post(
-            f"{_StreamffClient.base_url}/api/videos/upload/{video_id}",
-            data=multipart_data,
-            headers={"Content-Type": multipart_data.content_type},
-        )
+        res = self.__session.post(f"{self.base_url}/api/videos/upload/{video_id}",
+                                  data=multipart_data,
+                                  headers={"Content-Type": multipart_data.content_type})
         res.raise_for_status()
+        res_json = res.json()
 
-        return StreamffVideo(id=video_id)
+        return res_json
 
 
-class _StreamjaClient:
+class StreamjaClient:
     base_url = "https://streamja.com"
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session | None = None):
+        if session is None:
+            session = Session()
+
         self.__session = session
 
     def __generate_upload_shortcode(self):
-        return self.__session.post(
-            f"{_StreamjaClient.base_url}/shortId.php",
-            data={"new": 1},
-        )
+        res = self.__session.post(f"{StreamjaClient.base_url}/shortId.php", data={"new": 1})
+        res.raise_for_status()
+        res_json: StreamjaUploadUrlData = res.json()
+        return res_json
 
     def clear_cookies(self):
         self.__session.cookies.clear(domain="streamja.com")
 
-    def get_video_content(self, video_id: str):
-        video_url = self.get_video_url(video_id)
-        res = self.__session.get(video_url)
-        res.raise_for_status()
-        return BytesIO(res.content)
-
     def get_video_url(self, video_id: str):
-        res = self.__session.get(f"{_StreamjaClient.base_url}/{video_id}")
+        res = self.__session.get(f"{StreamjaClient.base_url}/{video_id}")
         res.raise_for_status()
 
-        vid_source_tag = \
-            BeautifulSoup(res.text, features="html.parser").find("source")
+        vid_source_tag = BeautifulSoup(res.text, features="html.parser").find("source")
         assert isinstance(vid_source_tag, Tag)
 
-        video_source_url = vid_source_tag["src"]
-        assert isinstance(video_source_url, str)
+        vid_src_url = vid_source_tag["src"]
+        assert isinstance(vid_src_url, str)
 
-        return video_source_url
+        return vid_src_url
 
     def is_video_available(self, video_id: str):
-        return self.__session.get(f"{_StreamjaClient.base_url}/{video_id}").ok
+        return self.__session.get(f"{StreamjaClient.base_url}/{video_id}").ok
 
     def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{_StreamjaClient.base_url}/{video_id}")
+        res = self.__session.get(f"{StreamjaClient.base_url}/{video_id}")
         res.raise_for_status()
 
-        return BeautifulSoup(
-            res.text,
-            features="html.parser",
-        ).find(
-            "div",
-            attrs={"id": "video_container"}
-        ) is None
+        video_container = BeautifulSoup(res.text, features="html.parser").find(
+            "div", attrs={"id": "video_container"})
+        return video_container is None
 
-    def upload_video(self, video_io: IOBase, filename: str):
-        multipart_data = MultipartEncoder({
-            "file": (
-                filename,
-                video_io,
-                guess_type(filename)[0],
-            ),
-        })
+    def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4"):
+        multipart_data = MultipartEncoder({"file": (filename, video_io, guess_type(filename)[0])})
+        generate_shortcode_data = self.__generate_upload_shortcode()
 
-        res = self.__generate_upload_shortcode()
+        if generate_shortcode_data["status"] == 0 or "error" in generate_shortcode_data:
+            raise Exception("Error occurred while trying to generate Streamja video ID",
+                            generate_shortcode_data)
+
+        else:
+            assert "shortId" in generate_shortcode_data
+            assert "uploadUrl" in generate_shortcode_data
+
+        short_id = generate_shortcode_data["shortId"]
+        res = self.__session.post(f"{StreamjaClient.base_url}/upload.php", data=multipart_data,
+                                  params={"shortId": short_id},
+                                  headers={"Content-Type": multipart_data.content_type})
         res.raise_for_status()
+        res_json: StreamjaUploadData = res.json()
 
-        short_id = res.json()["shortId"]
+        if res_json["status"] == 0 or "error" in res_json:
+            raise Exception("Error occurred while trying to upload video to Streamja video ID " +
+                            short_id, res_json)
 
-        if "error" in res.json():
-            raise Exception("Error occurred while trying to generate " +
-                            "Streamja video ID", res)
+        else:
+            assert "image" in res_json
+            assert "shortId" in res_json
+            assert "url" in res_json
 
-        res = self.__session.post(
-            f"{_StreamjaClient.base_url}/upload.php",
-            params={"shortId": short_id},
-            data=multipart_data,
-            headers={"Content-Type": multipart_data.content_type},
-        )
-        res.raise_for_status()
-
-        if res.json()["status"] != 1:
-            raise Exception("Error occurred while trying to upload video to " +
-                            f"Streamja video ID {short_id}", res)
-
-        return StreamjaVideo(short_id=short_id)
+        return res_json
 
 
-class Client:
-    def __init__(
-        self,
-        session: Optional[Session] = None,
-        user_agent: Optional[str] = None,
-    ) -> None:
+class VHPClient:
+    def __init__(self, session: Session | None = None, user_agent: str | None = None):
         if session is None:
             session = Session()
 
@@ -1003,12 +649,12 @@ class Client:
         elif session.headers["User-Agent"] == requests_user_agent():
             session.headers["User-Agent"] = f"{__package__}/{__version__}"
 
-        self.__gfycat = _GfyCatClient(session)
-        self.__imgur = _ImgurClient(session)
-        self.__juststreamlive = _JustStreamLiveClient(session)
-        self.__streamable = _StreamableClient(session)
-        self.__streamff = _StreamffClient(session)
-        self.__streamja = _StreamjaClient(session)
+        self.__gfycat = GfyCatClient(session=session)
+        self.__imgur = ImgurClient(session=session)
+        self.__juststreamlive = JustStreamLiveClient(session=session)
+        self.__streamable = StreamableClient(session=session)
+        self.__streamff = StreamffClient(session=session)
+        self.__streamja = StreamjaClient(session=session)
 
     @property
     def gfycat(self):

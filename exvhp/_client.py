@@ -51,6 +51,7 @@ from .type import (
     StreamableVideoExtractorData,
     StreamjaUploadUrlData,
     StreamjaUploadData,
+    StreamffVideoData,
 )
 
 __version__ = require(__package__)[0].version
@@ -280,7 +281,7 @@ class JustStreamLiveClient:
         details: JustStreamLiveVideoDetails = res.json()
         return details
 
-    def upload_video(self, video_io: BinaryIO, filename: str):
+    def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4"):
         multipart_data = MultipartEncoder({"file": (filename, video_io,
                                                     guess_type(filename, strict=False)[0])})
 
@@ -539,11 +540,10 @@ class StreamffClient:
     def __generate_link(self):
         return self.__session.post(f"{self.base_url}/api/videos/generate-link")
 
-    def get_video_url(self, video_id: str):
+    def get_video_data(self, video_id: str):
         res = self.__session.get(f"{self.base_url}/api/videos/{video_id}")
         res.raise_for_status()
-        res_json = res.json()
-        print(res_json)
+        res_json: StreamffVideoData = res.json()
         return res_json
 
     def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4"):
@@ -557,9 +557,8 @@ class StreamffClient:
                                   data=multipart_data,
                                   headers={"Content-Type": multipart_data.content_type})
         res.raise_for_status()
-        res_json = res.json()
 
-        return res_json
+        return video_id, f"https://streamff.com/v/{video_id}"
 
 
 class StreamjaClient:

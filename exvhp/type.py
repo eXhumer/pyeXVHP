@@ -327,3 +327,12 @@ class StreamjaUploadData(TypedDict, total=False):
     shortId: str
     url: str
     image: str
+
+
+class StreamffVideoData(TypedDict):
+    views: int
+    uploaded: bool
+    publicURl: str
+    date: str
+    name: str
+    videoLink: str

@@ -28,7 +28,6 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 from requests import Session
 from requests.structures import CaseInsensitiveDict
-from requests.utils import default_user_agent as requests_user_agent
 from requests_toolbelt import MultipartEncoder
 
 from .type import (
@@ -55,6 +54,7 @@ from .type import (
 )
 
 __version__ = require(__package__)[0].version
+__user_agent__ = f"{__package__}/{__version__}"
 
 
 class GfyCatClient:
@@ -77,8 +77,10 @@ class GfyCatClient:
         self.__authorization = f"{token_type} {access_token}"
 
     def __init__(self, session: Session | None = None):
-        if session is None:
-            session = Session()
+        session = session or Session()
+
+        if "User-Agent" not in session.headers:
+            session.headers["User-Agent"] = __user_agent__
 
         self.__authorization: str | None = None
         self.__expires_at: datetime | None = None
@@ -140,8 +142,10 @@ class ImgurClient:
     client_id = "546c25a59c58ad7"
 
     def __init__(self, session: Session | None = None):
-        if session is None:
-            session = Session()
+        session = session or Session()
+
+        if "User-Agent" not in session.headers:
+            session.headers["User-Agent"] = __user_agent__
 
         self.__session = session
 
@@ -270,8 +274,10 @@ class JustStreamLiveClient:
     base_url = "https://juststream.live"
 
     def __init__(self, session: Session | None = None):
-        if session is None:
-            session = Session()
+        session = session or Session()
+
+        if "User-Agent" not in session.headers:
+            session.headers["User-Agent"] = __user_agent__
 
         self.__session = session
 
@@ -349,8 +355,10 @@ class StreamableClient:
         return f"{algo} Credential={access_key_id}/{cs}, SignedHeaders={sh}, Signature={signature}"
 
     def __init__(self, session: Session | None = None):
-        if session is None:
-            session = Session()
+        session = session or Session()
+
+        if "User-Agent" not in session.headers:
+            session.headers["User-Agent"] = __user_agent__
 
         self.__session = session
 
@@ -634,19 +642,14 @@ class StreamjaClient:
 
 
 class VHPClient:
-    def __init__(self, session: Session | None = None, user_agent: str | None = None):
-        if session is None:
-            session = Session()
+    __SESSION = Session()
+    __SESSION.headers["User-Agent"] = __user_agent__
 
-        if user_agent:
-            assert session.headers["User-Agent"] == requests_user_agent(), \
-                "Custom User-Agent specified both in session headers and " + \
-                "in class constructor"
+    def __init__(self, session: Session | None = None):
+        session = session or VHPClient.__SESSION
 
-            session.headers["User-Agent"] = user_agent
-
-        elif session.headers["User-Agent"] == requests_user_agent():
-            session.headers["User-Agent"] = f"{__package__}/{__version__}"
+        if "User-Agent" not in session.headers:
+            session.headers["User-Agent"] = __user_agent__
 
         self.__gfycat = GfyCatClient(session=session)
         self.__imgur = ImgurClient(session=session)

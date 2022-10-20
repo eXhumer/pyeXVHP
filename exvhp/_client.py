@@ -28,6 +28,7 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 from requests import Session
 from requests.structures import CaseInsensitiveDict
+from requests.utils import default_user_agent
 from requests_toolbelt import MultipartEncoder
 
 from .type import (
@@ -79,7 +80,8 @@ class GfyCatClient:
     def __init__(self, session: Session | None = None):
         session = session or Session()
 
-        if "User-Agent" not in session.headers:
+        if "User-Agent" not in session.headers or \
+                session.headers["User-Agent"] == default_user_agent():
             session.headers["User-Agent"] = __user_agent__
 
         self.__authorization: str | None = None
@@ -144,7 +146,8 @@ class ImgurClient:
     def __init__(self, session: Session | None = None):
         session = session or Session()
 
-        if "User-Agent" not in session.headers:
+        if "User-Agent" not in session.headers or \
+                session.headers["User-Agent"] == default_user_agent():
             session.headers["User-Agent"] = __user_agent__
 
         self.__session = session
@@ -276,7 +279,8 @@ class JustStreamLiveClient:
     def __init__(self, session: Session | None = None):
         session = session or Session()
 
-        if "User-Agent" not in session.headers:
+        if "User-Agent" not in session.headers or \
+                session.headers["User-Agent"] == default_user_agent():
             session.headers["User-Agent"] = __user_agent__
 
         self.__session = session
@@ -357,7 +361,8 @@ class StreamableClient:
     def __init__(self, session: Session | None = None):
         session = session or Session()
 
-        if "User-Agent" not in session.headers:
+        if "User-Agent" not in session.headers or \
+                session.headers["User-Agent"] == default_user_agent():
             session.headers["User-Agent"] = __user_agent__
 
         self.__session = session
@@ -648,7 +653,8 @@ class VHPClient:
     def __init__(self, session: Session | None = None):
         session = session or VHPClient.__SESSION
 
-        if "User-Agent" not in session.headers:
+        if "User-Agent" not in session.headers or \
+                session.headers["User-Agent"] == default_user_agent():
             session.headers["User-Agent"] = __user_agent__
 
         self.__gfycat = GfyCatClient(session=session)

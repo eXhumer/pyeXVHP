@@ -2,6 +2,7 @@
 Python library for managing videos hosted from various supported video hosting platforms.
 
 ## Supported Platforms
+* Dubz
 * GfyCat
 * Imgur
 * JustStreamLive

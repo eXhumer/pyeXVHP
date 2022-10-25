@@ -58,6 +58,80 @@ __version__ = require(__package__)[0].version
 __user_agent__ = f"{__package__}/{__version__}"
 
 
+class DubzClient:
+    base_url = "https://dubz.co"
+
+    def __init__(self, session: Session | None = None):
+        session = session or Session()
+
+        if "User-Agent" not in session.headers or \
+                session.headers["User-Agent"] == default_user_agent():
+            session.headers["User-Agent"] = __user_agent__
+
+        self.__session = session
+
+    def __generate_upload_id(self):
+        res = self.__session.get(DubzClient.base_url)
+        res.raise_for_status()
+
+        link_id_tag = BeautifulSoup(res.text, features="html.parser",)\
+            .find("input", attrs={"type": "hidden", "name": "link_id", "id": "link_id"})
+        assert isinstance(link_id_tag, Tag)
+
+        link_id = link_id_tag["value"]
+        assert isinstance(link_id, str)
+
+        return link_id
+
+    def is_video_available(self, video_id: str):
+        res = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
+        res.raise_for_status()
+
+        vid_source_tag = BeautifulSoup(res.text, features="html.parser").find("source")
+
+        if vid_source_tag is None:
+            return False
+
+        return f"<center>This video has been deleted <small><br>id: {video_id}</small></center>" \
+            not in res.text
+
+    def is_video_processing(self, video_id: str):
+        res = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
+        res.raise_for_status()
+
+        return "<center><br><br><h4 class=\"text-center\" style=\"color:#fff;\"><strong>This " + \
+            "video is now processing.</strong></h4><span style=\"color:#fff;\">We'll refresh " + \
+            "this page when it's ready.</span></center>" in res.text
+
+    def get_video_url(self, video_id: str):
+        res = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
+        res.raise_for_status()
+
+        assert f"<center>This video has been deleted <small><br>id: {video_id}</small></center>" \
+            not in res.text, f"Dubz video {video_id} deleted!"
+
+        vid_source_tag = BeautifulSoup(res.text, features="html.parser").find("source")
+        assert isinstance(vid_source_tag, Tag)
+
+        video_source_url = vid_source_tag["src"]
+        assert isinstance(video_source_url, str)
+
+        return video_source_url
+
+    def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4"):
+        link_id = self.__generate_upload_id()
+
+        multipart_data = MultipartEncoder({"upload_file": (filename, video_io,
+                                                           guess_type(filename)[0]),
+                                           "link_id": link_id})
+
+        res = self.__session.post(f"{DubzClient.base_url}/upload_file.php", data=multipart_data,
+                                  headers={"Content-Type": multipart_data.content_type})
+        res.raise_for_status()
+
+        return res, f"{DubzClient.base_url}/v/{link_id}"
+
+
 class GfyCatClient:
     api_url = "https://api.gfycat.com"
     weblogin_url = "https://weblogin.gfycat.com"
@@ -657,12 +731,17 @@ class VHPClient:
                 session.headers["User-Agent"] == default_user_agent():
             session.headers["User-Agent"] = __user_agent__
 
+        self.__dubz = DubzClient(session=session)
         self.__gfycat = GfyCatClient(session=session)
         self.__imgur = ImgurClient(session=session)
         self.__juststreamlive = JustStreamLiveClient(session=session)
         self.__streamable = StreamableClient(session=session)
         self.__streamff = StreamffClient(session=session)
         self.__streamja = StreamjaClient(session=session)
+
+    @property
+    def dubz(self):
+        return self.__dubz
 
     @property
     def gfycat(self):

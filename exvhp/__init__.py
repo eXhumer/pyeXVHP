@@ -14,6 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from ._client import (  # noqa: F401
+    DubzClient,
     GfyCatClient,
     ImgurClient,
     JustStreamLiveClient,

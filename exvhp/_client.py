@@ -83,34 +83,38 @@ class DubzClient:
 
         return link_id
 
-    def is_video_available(self, video_id: str):
-        res = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
-        res.raise_for_status()
+    @staticmethod
+    def __deleted(video_id: str, text: str):
+        return f"<center>This video has been deleted <small><br>id: {video_id}</small>" + \
+            "</center>" not in text
 
-        vid_source_tag = BeautifulSoup(res.text, features="html.parser").find("source")
-
-        if vid_source_tag is None:
-            return False
-
-        return f"<center>This video has been deleted <small><br>id: {video_id}</small></center>" \
-            not in res.text
-
-    def is_video_processing(self, video_id: str):
-        res = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
-        res.raise_for_status()
-
+    @staticmethod
+    def __processing(text: str):
         return "<center><br><br><h4 class=\"text-center\" style=\"color:#fff;\"><strong>This " + \
             "video is now processing.</strong></h4><span style=\"color:#fff;\">We'll refresh " + \
-            "this page when it's ready.</span></center>" in res.text
+            "this page when it's ready.</span></center>" in text
+
+    def is_video_deleted(self, video_id: str):
+        r = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
+        r.raise_for_status()
+
+        return DubzClient.__deleted(video_id, r.text)
+
+    def is_video_processing(self, video_id: str):
+        r = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
+        r.raise_for_status()
+
+        assert not DubzClient.__deleted(video_id, r.text), f"Dubz video {video_id} deleted!"
+        return DubzClient.__processing(r.text)
 
     def get_video_url(self, video_id: str):
-        res = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
-        res.raise_for_status()
+        r = self.__session.get(f"{DubzClient.base_url}/v/{video_id}")
+        r.raise_for_status()
 
-        assert f"<center>This video has been deleted <small><br>id: {video_id}</small></center>" \
-            not in res.text, f"Dubz video {video_id} deleted!"
+        assert not DubzClient.__deleted(video_id, r.text), f"Dubz video {video_id} deleted!"
+        assert not DubzClient.__processing(r.text), f"Dubz video {video_id} processing!"
 
-        vid_source_tag = BeautifulSoup(res.text, features="html.parser").find("source")
+        vid_source_tag = BeautifulSoup(r.text, features="html.parser").find("source")
         assert isinstance(vid_source_tag, Tag)
 
         video_source_url = vid_source_tag["src"]
@@ -125,11 +129,11 @@ class DubzClient:
                                                            guess_type(filename)[0]),
                                            "link_id": link_id})
 
-        res = self.__session.post(f"{DubzClient.base_url}/upload_file.php", data=multipart_data,
-                                  headers={"Content-Type": multipart_data.content_type})
-        res.raise_for_status()
+        r = self.__session.post(f"{DubzClient.base_url}/upload_file.php", data=multipart_data,
+                                headers={"Content-Type": multipart_data.content_type})
+        r.raise_for_status()
 
-        return res, f"{DubzClient.base_url}/v/{link_id}"
+        return r, f"{DubzClient.base_url}/v/{link_id}"
 
 
 class GfyCatClient:

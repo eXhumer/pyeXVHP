@@ -17,7 +17,7 @@ Python library for managing videos hosted from various supported video hosting p
 
 ### Install from source
 ```console
-pip install .
+pip install -e git+https://github.com/eXhumer/pyeXVHP.git@dev#egg=exvhp
 ```
 
 ## Licensing

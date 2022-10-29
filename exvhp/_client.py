@@ -86,7 +86,7 @@ class DubzClient:
     @staticmethod
     def __deleted(video_id: str, text: str):
         return f"<center>This video has been deleted <small><br>id: {video_id}</small>" + \
-            "</center>" not in text
+            "</center>" in text
 
     @staticmethod
     def __processing(text: str):
@@ -114,7 +114,7 @@ class DubzClient:
         assert not DubzClient.__deleted(video_id, r.text), f"Dubz video {video_id} deleted!"
         assert not DubzClient.__processing(r.text), f"Dubz video {video_id} processing!"
 
-        vid_source_tag = BeautifulSoup(r.text, features="html.parser").find("source")
+        vid_source_tag = BeautifulSoup(r.text, features="html.parser").find("video")
         assert isinstance(vid_source_tag, Tag)
 
         video_source_url = vid_source_tag["src"]

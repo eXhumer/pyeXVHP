@@ -13,7 +13,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from typing import Dict, List, Literal, Required, TypedDict
+from __future__ import annotations
+from typing import Literal, NotRequired, Required, TypedDict
 
 
 class GfyCatItem(TypedDict):
@@ -50,16 +51,56 @@ class GfyCatItem(TypedDict):
     extraLemmas: str
     md5: str
     views: int
-    tags: List[str]
+    tags: list[str]
     userName: str
     userName: str
     userName: str
     userName: str
-    languageCategories: List[str] | None
+    languageCategories: list[str] | None
     subreddit: str
     redditId: str
     redditIdText: str
-    domainWhitelist: List[str]
+    domainWhitelist: list[str]
+
+
+class GfyCatCreatePost(TypedDict):
+    fetchUrl: NotRequired[str]
+    title: NotRequired[str]
+    description: NotRequired[str]
+    tags: NotRequired[list[str]]
+    noMd5: NotRequired[bool]
+    private: NotRequired[bool]
+    nsfw: NotRequired[int]
+    fetchSeconds: NotRequired[int]
+    fetchMinutes: NotRequired[int]
+    fetchHours: NotRequired[int]
+    captions: NotRequired[list[GfyCatCreatePostCaption]]
+    cut: NotRequired[GfyCatCreatePostCut]
+    crop: NotRequired[list[GfyCatCreatePostCrop]]
+
+
+class GfyCatCreatePostCaption(TypedDict):
+    text: str
+    startSeconds: NotRequired[int]
+    duration: NotRequired[str]
+    fontHeight: NotRequired[int]
+    x: NotRequired[int]
+    y: NotRequired[int]
+    fontHeightRelative: NotRequired[int]
+    xRelative: NotRequired[int]
+    yRelative: NotRequired[int]
+
+
+class GfyCatCreatePostCrop(TypedDict):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class GfyCatCreatePostCut(TypedDict):
+    duration: int
+    start: int
 
 
 class GfyCatNewPost(TypedDict):
@@ -147,8 +188,8 @@ class ImgurMedia(TypedDict):
     shared_with_community: bool
     is_pending: bool
     platform: str
-    media: List[ImgurAlbumMedia]
-    display: List[str]
+    media: list[ImgurAlbumMedia]
+    display: list[str]
 
 
 class ImgurResponse(TypedDict):
@@ -192,8 +233,8 @@ class ImgurUploadPollMediaData(TypedDict):
 
 
 class ImgurUploadPollData(TypedDict):
-    done: Dict[str, str]
-    images: Dict[str, ImgurUploadPollMediaData]
+    done: dict[str, str]
+    images: dict[str, ImgurUploadPollMediaData]
 
 
 class ImgurUploadPollResponse(ImgurResponse):
@@ -230,7 +271,7 @@ class ImgurUploadedImageData(TypedDict):
     is_ad: bool
     in_most_viral: bool
     has_sound: bool
-    tags: List[str]
+    tags: list[str]
     ad_type: int
     ad_url: str
     edited: str
@@ -242,18 +283,6 @@ class ImgurUploadedImageData(TypedDict):
 
 class ImgurUploadedImageResponse(ImgurResponse):
     data: ImgurUploadedImageData
-
-
-class JustStreamLiveUploadData(TypedDict):
-    id: str
-
-
-class JustStreamLiveVideoDetails(TypedDict):
-    views: int
-    created_at: str
-    video_id: str
-    video_title: str | None
-    status: Literal["SUBMITTED", "PROCESSING", "COMPLETE"]
 
 
 class StreamableUploadShortCodeTranscoderOptions(TypedDict, total=False):
@@ -291,7 +320,7 @@ class StreamableUploadData(TypedDict, total=False):
     key: str
     credentials: StreamableUploadCredentials
     url: str
-    fields: Dict[str, str]
+    fields: dict[str, str]
     time: int
     transcoder_options: StreamableUploadShortCodeTranscoderOptions
     video: StreamableVideoData
@@ -304,7 +333,7 @@ class StreamableVideoExtractorData(TypedDict, total=False):
     audio_url: str | None
     playback_url: str
     mime: str
-    headers: Dict[str, str]
+    headers: dict[str, str]
     id: str
     duration: int | None
     extractor: Literal["streamable", "generic"]

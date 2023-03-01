@@ -29,6 +29,7 @@ from bs4.element import Tag
 from httpx import Client
 
 from .type import (
+    GfyCatCreatePost,
     GfyCatNewPost,
     GfyCatPostInfo,
     GfyCatUploadStatus,
@@ -41,8 +42,6 @@ from .type import (
     ImgurUploadedImageResponse,
     ImgurUploadPollResponse,
     ImgurUploadTicketResponse,
-    JustStreamLiveUploadData,
-    JustStreamLiveVideoDetails,
     StreamableUploadData,
     StreamableVideoData,
     StreamableVideoExtractorData,
@@ -92,6 +91,18 @@ class GfyCatClient:
             timedelta(seconds=expires_in)
         self.__authorization = f"{token_type} {access_token}"
 
+    def delete_post(self, gfyname: str):
+        if datetime.now(tz=timezone.utc) >= self.__expires_at:
+            self.__obtain_authorization()
+
+        res = self.__client.delete(f"{self.api_url}/v1/gfycats/{gfyname}",
+                                   headers={"Authorization": self.__authorization})
+
+        if res.status_code >= 400:
+            res.raise_for_status()
+
+        return res.status_code < 400
+
     def get_post_info(self, gfyid: str):
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
@@ -120,14 +131,12 @@ class GfyCatClient:
 
         return post_status
 
-    def new_video_post(self, title: str, keep_audio: bool = True, private: bool = True):
+    def new_video_post(self, post_data: GfyCatCreatePost | None = None):
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
-        res = self.__client.post(f"{self.api_url}/v1/gfycats",
-                                 headers={"Authorization": self.__authorization},
-                                 json={"keepAudio": keep_audio, "private": private,
-                                       "title": title})
+        res = self.__client.post(f"{self.api_url}/v1/gfycats", json=post_data,
+                                 headers={"Authorization": self.__authorization})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -144,7 +153,7 @@ class GfyCatClient:
         if res.status_code >= 400:
             res.raise_for_status()
 
-        return res.ok
+        return res.status_code < 400
 
 
 class ImgurClient:
@@ -299,38 +308,6 @@ class ImgurClient:
 
         data: ImgurUploadedImageResponse | ImgurUploadTicketResponse = res.json()
 
-        return data
-
-
-class JustStreamLiveClient:
-    api_url = "https://api.juststream.live"
-    base_url = "https://juststream.live"
-
-    def __init__(self, client: Client | None = None, user_agent: str | None = None):
-        client = client or Client(http2=h2_available)
-        client.headers["User-Agent"] = user_agent or __user_agent__
-        self.__client = client
-
-    def video_details(self, video_id: str):
-        res = self.__client.get(f"{self.api_url}/videos/{video_id}")
-
-        if res.status_code >= 400:
-            res.raise_for_status()
-
-        details: JustStreamLiveVideoDetails = res.json()
-        return details
-
-    def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4"):
-        video_mimetype = guess_type(filename, strict=False)[0]
-        assert video_mimetype is not None
-
-        res = self.__client.post(f"{self.api_url}/videos/upload",
-                                 files={"file": (filename, video_io, video_mimetype)})
-
-        if res.status_code >= 400:
-            res.raise_for_status()
-
-        data: JustStreamLiveUploadData = res.json()
         return data
 
 
@@ -723,7 +700,6 @@ class VHPClient:
         client = client or VHPClient.__CLIENT
         self.__gfycat = GfyCatClient(client=client, user_agent=user_agent)
         self.__imgur = ImgurClient(client=client, user_agent=user_agent)
-        self.__juststreamlive = JustStreamLiveClient(client=client, user_agent=user_agent)
         self.__streamable = StreamableClient(client=client, user_agent=user_agent)
         self.__streamff = StreamffClient(client=client, user_agent=user_agent)
         self.__streamja = StreamjaClient(client=client, user_agent=user_agent)
@@ -735,10 +711,6 @@ class VHPClient:
     @property
     def imgur(self):
         return self.__imgur
-
-    @property
-    def juststreamlive(self):
-        return self.__juststreamlive
 
     @property
     def streamable(self):

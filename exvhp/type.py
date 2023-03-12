@@ -104,8 +104,8 @@ class GfyCatCreatePostCut(TypedDict):
 
 
 class GfyCatNewPost(TypedDict):
-    uploadType: str
-    secret: str
+    uploadType: NotRequired[str]
+    secret: NotRequired[str]
     gfyname: str
 
 
@@ -119,7 +119,7 @@ class GfyCatUploadError(TypedDict):
 
 
 class GfyCatUploadStatus(TypedDict, total=False):
-    task: Required[Literal["complete", "encoding", "error", "NouFoundo"]]
+    task: Required[Literal["complete", "encoding", "error", "NotFoundo"]]
     time: int
     gfyname: str
     errorMessage: GfyCatUploadError

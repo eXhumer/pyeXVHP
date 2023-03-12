@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from hmac import new as hmac_new
-from io import SEEK_END, SEEK_SET
+from io import BytesIO, SEEK_END, SEEK_SET
 from mimetypes import guess_type
 from pathlib import Path
 from pkg_resources import require
@@ -62,22 +62,21 @@ __user_agent__ = f"{__package__}/{__version__}"
 
 
 class GfyCatClient:
-    api_url = "https://api.gfycat.com"
-    weblogin_url = "https://weblogin.gfycat.com"
-    webtoken_access_key = "Anr96uuqt9EdamSCwK4txKPjMsf2M95Rfa5FLLhPFucu8H5HTzeutyAa"
+    API_URL = "https://api.gfycat.com"
+    WEBLOGIN_URL = "https://weblogin.gfycat.com"
+    WEBTOKEN_ACCESS_KEY = "Anr96uuqt9EdamSCwK4txKPjMsf2M95Rfa5FLLhPFucu8H5HTzeutyAa"
 
-    def __init__(self, client: Client | None = None, user_agent: str | None = None):
-        client = client or Client(http2=h2_available)
-        client.headers["User-Agent"] = user_agent or __user_agent__
-
+    def __init__(self, client: Client, user_agent: str | None = None):
         self.__authorization = None
-        self.__expires_at = None
         self.__client = client
+        self.__expires_at = None
+        self.__user_agent = user_agent
         self.__obtain_authorization()
 
     def __obtain_authorization(self):
-        res = self.__client.post(f"{self.weblogin_url}/oauth/webtoken",
-                                 json={"access_key": self.webtoken_access_key})
+        res = self.__client.post(f"{self.WEBLOGIN_URL}/oauth/webtoken",
+                                 json={"access_key": self.WEBTOKEN_ACCESS_KEY},
+                                 headers={"User-Agent": self.__user_agent or __user_agent__})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -95,8 +94,9 @@ class GfyCatClient:
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
-        res = self.__client.delete(f"{self.api_url}/v1/gfycats/{gfyname}",
-                                   headers={"Authorization": self.__authorization})
+        res = self.__client.delete(f"{self.API_URL}/v1/gfycats/{gfyname}",
+                                   headers={"Authorization": self.__authorization,
+                                            "User-Agent": self.__user_agent or __user_agent__})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -107,8 +107,9 @@ class GfyCatClient:
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
-        res = self.__client.get(f"{self.api_url}/v1/gfycats/{gfyid}",
-                                headers={"Authorization": self.__authorization})
+        res = self.__client.get(f"{self.API_URL}/v1/gfycats/{gfyid}",
+                                headers={"Authorization": self.__authorization,
+                                         "User-Agent": self.__user_agent or __user_agent__})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -121,8 +122,9 @@ class GfyCatClient:
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
-        res = self.__client.get(f"{self.api_url}/v1/gfycats/fetch/status/{gfyid}",
-                                headers={"Authorization": self.__authorization})
+        res = self.__client.get(f"{self.API_URL}/v1/gfycats/fetch/status/{gfyid}",
+                                headers={"Authorization": self.__authorization,
+                                         "User-Agent": self.__user_agent or __user_agent__})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -135,8 +137,9 @@ class GfyCatClient:
         if datetime.now(tz=timezone.utc) >= self.__expires_at:
             self.__obtain_authorization()
 
-        res = self.__client.post(f"{self.api_url}/v1/gfycats", json=post_data,
-                                 headers={"Authorization": self.__authorization})
+        res = self.__client.post(f"{self.API_URL}/v1/gfycats", json=post_data,
+                                 headers={"Authorization": self.__authorization,
+                                          "User-Agent": self.__user_agent or __user_agent__})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -148,7 +151,8 @@ class GfyCatClient:
     def upload_video(self, gfyname: str, media_io: BinaryIO, filename: str = "video.mp4",
                      upload_type: str = "filedrop.gfycat.com"):
         res = self.__client.post(f"https://{upload_type}/", data={"key": gfyname},
-                                 files={"file": (filename, media_io, guess_type(filename)[0])})
+                                 files={"file": (filename, media_io, guess_type(filename)[0])},
+                                 headers={"User-Agent": self.__user_agent or __user_agent__})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -292,9 +296,7 @@ class ImgurClient:
         if not media_mimetype:
             media_mimetype = guess_type(media_filename, strict=False)[0]
 
-        if not media_mimetype:
-            assert False, "Unable to guess media MIME type!"
-
+        assert media_mimetype is not None, "Unable to guess media MIME type!"
         assert media_mimetype.startswith(("image/", "video/"))
 
         media_name = "image" if media_mimetype.startswith("image/") else "video"
@@ -312,9 +314,9 @@ class ImgurClient:
 
 
 class StreamableClient:
-    api_url = "https://ajax.streamable.com"
-    base_url = "https://streamable.com"
-    frontend_react_version = "5a6120a04b6db864113d706cc6a6131cb8ca3587"
+    API_URL = "https://ajax.streamable.com"
+    BASE_URL = "https://streamable.com"
+    FRONTEND_REACT_VERSION = "5a6120a04b6db864113d706cc6a6131cb8ca3587"
 
     @staticmethod
     def __hmac_sha256_sign(key: bytes, msg: str):
@@ -367,14 +369,14 @@ class StreamableClient:
 
         return f"{algo} Credential={access_key_id}/{cs}, SignedHeaders={sh}, Signature={signature}"
 
-    def __init__(self, client: Client | None = None, user_agent: str | None = None):
-        client = client or Client(http2=h2_available)
-        client.headers["User-Agent"] = user_agent or __user_agent__
+    def __init__(self, client: Client, user_agent: str | None = None):
         self.__client = client
+        self.__user_agent = user_agent or __user_agent__
 
     def __generate_clip_shortcode(self, video_id: str, video_source: str,
                                   title: str | None = None):
-        res = self.__client.post(f"{self.api_url}/videos",
+        res = self.__client.post(f"{self.API_URL}/videos",
+                                 headers={"User-Agent": self.__user_agent},
                                  json={
                                      "extract_id": video_id,
                                      "extractor": (
@@ -396,9 +398,10 @@ class StreamableClient:
         return res_json
 
     def __generate_upload_shortcode(self, video_sz: int):
-        res = self.__client.get(f"{self.api_url}/shortcode",
+        res = self.__client.get(f"{self.API_URL}/shortcode",
+                                headers={"User-Agent": self.__user_agent},
                                 params={
-                                    "version": self.frontend_react_version,
+                                    "version": self.FRONTEND_REACT_VERSION,
                                     "size": video_sz,
                                 })
 
@@ -413,7 +416,8 @@ class StreamableClient:
                                   video_url: str,
                                   extractor: Literal["streamable", "generic"] = "generic",
                                   mute: bool = False, title: str | None = None):
-        res = self.__client.post(f"{self.api_url}/transcode/{shortcode}",
+        res = self.__client.post(f"{self.API_URL}/transcode/{shortcode}",
+                                 headers={"User-Agent": self.__user_agent},
                                  json={
                                      "extractor": extractor,
                                      "headers": video_headers,
@@ -434,7 +438,7 @@ class StreamableClient:
 
     def __transcode_uploaded_video(self, shortcode: str, url: str, transcoder_token: str,
                                    video_sz: int):
-        res = self.__client.post(f"{self.api_url}/transcode/{shortcode}",
+        res = self.__client.post(f"{self.API_URL}/transcode/{shortcode}",
                                  json={
                                      "shortcode": shortcode,
                                      "size": video_sz,
@@ -452,7 +456,8 @@ class StreamableClient:
 
     def __update_upload_metadata(self, shortcode: str, filename: str, video_sz: int,
                                  title: str | None = None):
-        res = self.__client.put(f"{self.api_url}/videos/{shortcode}", params={"purge": ""},
+        res = self.__client.put(f"{self.API_URL}/videos/{shortcode}", params={"purge": ""},
+                                headers={"User-Agent": self.__user_agent},
                                 json={
                                     "original_name": filename,
                                     "original_size": video_sz,
@@ -479,7 +484,8 @@ class StreamableClient:
         return video_data
 
     def get_video_url(self, video_id: str):
-        res = self.__client.get(f"{StreamableClient.base_url}/{video_id}")
+        res = self.__client.get(f"{StreamableClient.BASE_URL}/{video_id}",
+                                headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -496,10 +502,12 @@ class StreamableClient:
         return video_source_url
 
     def is_video_available(self, video_id: str):
-        return self.__client.get(f"{self.base_url}/{video_id}").ok
+        return self.__client.get(f"{self.BASE_URL}/{video_id}",
+                                 headers={"User-Agent": self.__user_agent}).status_code < 400
 
     def is_video_processing(self, video_id: str):
-        res = self.__client.get(f"{StreamableClient.base_url}/{video_id}")
+        res = self.__client.get(f"{StreamableClient.BASE_URL}/{video_id}",
+                                headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -510,7 +518,9 @@ class StreamableClient:
         return player_tag is None
 
     def upload_video(self, video_io: BinaryIO, filename: str = "video.mp4",
-                     title: str | None = None, upload_region: str = "us-east-1"):
+                     title: str | None = None, upload_region: str | None = None):
+        upload_region = upload_region or "us-east-1"
+
         video_io.seek(0, SEEK_END)
         video_sz = video_io.tell()
         video_io.seek(0, SEEK_SET)
@@ -545,7 +555,7 @@ class StreamableClient:
             upload_region, "s3")
 
         res = self.__client.put(upload_data["transcoder_options"]["url"], data=video_io,
-                                headers=aws_headers)
+                                headers=aws_headers | {"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -556,7 +566,8 @@ class StreamableClient:
                                                upload_data["transcoder_options"]["size"])
 
     def video_extractor(self, url: str):
-        res = self.__client.get(f"{self.api_url}/extract", params={"url": url})
+        res = self.__client.get(f"{self.API_URL}/extract", params={"url": url},
+                                headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -571,18 +582,19 @@ class StreamableClient:
 
 
 class StreamffClient:
-    base_url = "https://streamff.com"
+    BASE_URL = "https://streamff.com"
 
-    def __init__(self, client: Client | None = None, user_agent: str | None = None):
-        client = client or Client(http2=h2_available)
-        client.headers["User-Agent"] = user_agent or __user_agent__
+    def __init__(self, client: Client, user_agent: str | None = None):
         self.__client = client
+        self.__user_agent = user_agent or __user_agent__
 
     def __generate_link(self):
-        return self.__client.post(f"{self.base_url}/api/videos/generate-link")
+        return self.__client.post(f"{self.BASE_URL}/api/videos/generate-link",
+                                  headers={"User-Agent": self.__user_agent})
 
     def get_video_data(self, video_id: str):
-        res = self.__client.get(f"{self.base_url}/api/videos/{video_id}")
+        res = self.__client.get(f"{self.BASE_URL}/api/videos/{video_id}",
+                                headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -602,7 +614,8 @@ class StreamffClient:
         assert video_mimetype is not None and video_mimetype.startswith("video/")
         files = {"file": (filename, video_io, video_mimetype)}
 
-        res = self.__client.post(f"{self.base_url}/api/videos/upload/{video_id}", files=files)
+        res = self.__client.post(f"{self.BASE_URL}/api/videos/upload/{video_id}", files=files,
+                                 headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -611,15 +624,15 @@ class StreamffClient:
 
 
 class StreamjaClient:
-    base_url = "https://streamja.com"
+    BASE_URL = "https://streamja.com"
 
-    def __init__(self, client: Client | None = None, user_agent: str | None = None):
-        client = client or Client(http2=h2_available)
-        client.headers["User-Agent"] = user_agent or __user_agent__
+    def __init__(self, client: Client, user_agent: str | None = None):
         self.__client = client
+        self.__user_agent = user_agent or __user_agent__
 
     def __generate_upload_shortcode(self):
-        res = self.__client.post(f"{StreamjaClient.base_url}/shortId.php", data={"new": 1})
+        res = self.__client.post(f"{StreamjaClient.BASE_URL}/shortId.php", data={"new": 1},
+                                 headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -631,7 +644,8 @@ class StreamjaClient:
         self.__client.cookies.clear(domain="streamja.com")
 
     def get_video_url(self, video_id: str):
-        res = self.__client.get(f"{StreamjaClient.base_url}/{video_id}")
+        res = self.__client.get(f"{StreamjaClient.BASE_URL}/{video_id}",
+                                headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -645,10 +659,12 @@ class StreamjaClient:
         return vid_src_url
 
     def is_video_available(self, video_id: str):
-        return self.__client.get(f"{StreamjaClient.base_url}/{video_id}").ok
+        return self.__client.get(f"{StreamjaClient.BASE_URL}/{video_id}",
+                                 headers={"User-Agent": self.__user_agent}).status_code < 400
 
     def is_video_processing(self, video_id: str):
-        res = self.__client.get(f"{StreamjaClient.base_url}/{video_id}")
+        res = self.__client.get(f"{StreamjaClient.BASE_URL}/{video_id}",
+                                headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -672,8 +688,9 @@ class StreamjaClient:
             assert "uploadUrl" in generate_shortcode_data
 
         short_id = generate_shortcode_data["shortId"]
-        res = self.__client.post(f"{StreamjaClient.base_url}/upload.php", files=files,
-                                 params={"shortId": short_id})
+        res = self.__client.post(f"{StreamjaClient.BASE_URL}/upload.php", files=files,
+                                 params={"shortId": short_id},
+                                 headers={"User-Agent": self.__user_agent})
 
         if res.status_code >= 400:
             res.raise_for_status()
@@ -693,16 +710,24 @@ class StreamjaClient:
 
 
 class VHPClient:
-    __CLIENT = Client(http2=h2_available)
-    __CLIENT.headers["User-Agent"] = __user_agent__
+    __CLIENT = None
 
-    def __init__(self, client: Client | None = None, user_agent: str | None = None):
-        client = client or VHPClient.__CLIENT
-        self.__gfycat = GfyCatClient(client=client, user_agent=user_agent)
-        self.__imgur = ImgurClient(client=client, user_agent=user_agent)
-        self.__streamable = StreamableClient(client=client, user_agent=user_agent)
-        self.__streamff = StreamffClient(client=client, user_agent=user_agent)
-        self.__streamja = StreamjaClient(client=client, user_agent=user_agent)
+    def __init__(self, user_agent: str | None = None):
+        if VHPClient.__CLIENT is None:
+            VHPClient.__CLIENT = Client(http2=h2_available)
+            VHPClient.__CLIENT.follow_redirects = True
+
+        self.__gfycat = GfyCatClient(VHPClient.__CLIENT, user_agent=user_agent)
+        self.__imgur = ImgurClient(VHPClient.__CLIENT, user_agent=user_agent)
+        self.__streamable = StreamableClient(VHPClient.__CLIENT, user_agent=user_agent)
+        self.__streamff = StreamffClient(VHPClient.__CLIENT, user_agent=user_agent)
+        self.__streamja = StreamjaClient(VHPClient.__CLIENT, user_agent=user_agent)
+        self.__user_agent = user_agent or __user_agent__
+
+    def get_media_from_url(self, url: str):
+        res = VHPClient.__CLIENT.get(url, headers={"User-Agent": self.__user_agent})
+        res.raise_for_status()
+        return BytesIO(res.read())
 
     @property
     def gfycat(self):
